@@ -1,0 +1,99 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100%" height="100%">
+  <defs>
+    <!-- Background Gradient -->
+    <linearGradient id="laxBgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0a0e17"/>
+      <stop offset="100%" stop-color="#030712"/>
+    </linearGradient>
+
+    <!-- Cyan Glow Gradient -->
+    <linearGradient id="laxCyanGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00f2fe"/>
+      <stop offset="100%" stop-color="#0284c7"/>
+    </linearGradient>
+
+    <!-- Metallic Petal Gradient -->
+    <linearGradient id="laxMetalGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="50%" stop-color="#e2e8f0"/>
+      <stop offset="100%" stop-color="#94a3b8"/>
+    </linearGradient>
+
+    <!-- Spindle Machined Metal Gradient -->
+    <linearGradient id="laxSpindleGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#64748b"/>
+      <stop offset="35%" stop-color="#f1f5f9"/>
+      <stop offset="70%" stop-color="#cbd5e1"/>
+      <stop offset="100%" stop-color="#475569"/>
+    </linearGradient>
+  </defs>
+
+  <!-- App Rounded Badge Frame -->
+  <rect x="2" y="2" width="96" height="96" rx="22" fill="url(#laxBgGrad)" stroke="url(#laxCyanGrad)" stroke-width="1.8" stroke-opacity="0.85"/>
+  <rect x="5" y="5" width="90" height="90" rx="19" fill="none" stroke="#00f2fe" stroke-width="0.5" stroke-opacity="0.2"/>
+
+  <!-- ==================== CNC RETICLE / TARGETING BRACKETS ==================== -->
+  <!-- Top-Left Bracket -->
+  <path d="M 23 35 L 23 25 L 33 25" fill="none" stroke="#00d2ff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- Top-Right Bracket -->
+  <path d="M 67 25 L 77 25 L 77 35" fill="none" stroke="#00d2ff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- Bottom-Left Bracket -->
+  <path d="M 23 67 L 23 77 L 33 77" fill="none" stroke="#00d2ff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- Bottom-Right Bracket -->
+  <path d="M 67 77 L 77 77 L 77 67" fill="none" stroke="#00d2ff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- Center Crosshairs -->
+  <line x1="16" y1="51" x2="84" y2="51" stroke="#00d2ff" stroke-width="1.8" stroke-linecap="round"/>
+  <line x1="50" y1="36" x2="50" y2="82" stroke="#00d2ff" stroke-width="1.8" stroke-linecap="round"/>
+
+  <!-- ==================== 4-QUADRANT SYMMETRIC CNC TILES ==================== -->
+  <g fill="url(#laxMetalGrad)" stroke="#334155" stroke-width="0.6">
+    <!-- Top-Left Tile -->
+    <path d="M 28 29 L 46 29 C 46 36 43 45 46 48 L 28 48 C 28 42 27 35 28 29 Z"/>
+    <!-- Top-Right Tile -->
+    <path d="M 72 29 L 54 29 C 54 36 57 45 54 48 L 72 48 C 72 42 73 35 72 29 Z"/>
+    <!-- Bottom-Left Tile -->
+    <path d="M 28 73 L 46 73 C 46 66 43 57 46 54 L 28 54 C 28 60 27 67 28 73 Z"/>
+    <!-- Bottom-Right Tile -->
+    <path d="M 72 73 L 54 73 C 54 66 57 57 54 54 L 72 54 C 72 60 73 67 72 73 Z"/>
+  </g>
+
+  <!-- Leaf / Petal Carved Negative Space (Dark Inset Cutouts) -->
+  <g fill="#0b1120" stroke="#00d2ff" stroke-width="0.8" stroke-opacity="0.7">
+    <!-- Top-Left Leaf Cutouts -->
+    <path d="M 31 45 C 32 37 38 33 43 33 C 42 41 36 45 31 45 Z"/>
+    <path d="M 32 32 C 34 30 38 31 40 33 C 37 35 34 34 32 32 Z"/>
+
+    <!-- Top-Right Leaf Cutouts -->
+    <path d="M 69 45 C 68 37 62 33 57 33 C 58 41 64 45 69 45 Z"/>
+    <path d="M 68 32 C 66 30 62 31 60 33 C 63 35 66 34 68 32 Z"/>
+
+    <!-- Bottom-Left Leaf Cutouts -->
+    <path d="M 31 57 C 32 65 38 69 43 69 C 42 61 36 57 31 57 Z"/>
+    <path d="M 32 70 C 34 72 38 71 40 69 C 37 67 34 68 32 70 Z"/>
+
+    <!-- Bottom-Right Leaf Cutouts -->
+    <path d="M 69 57 C 68 65 62 69 57 69 C 58 61 64 57 69 57 Z"/>
+    <path d="M 68 70 C 66 72 62 71 60 69 C 63 67 66 68 68 70 Z"/>
+  </g>
+
+  <!-- ==================== CNC SPINDLE & DRILL BIT ==================== -->
+  <!-- Top Spindle Stepped Collars -->
+  <rect x="37" y="9" width="26" height="4" rx="1.2" fill="url(#laxSpindleGrad)" stroke="#1e293b" stroke-width="0.5"/>
+  <rect x="40" y="14" width="20" height="4" rx="1.2" fill="url(#laxSpindleGrad)" stroke="#1e293b" stroke-width="0.5"/>
+  <!-- Collet Cone -->
+  <path d="M 43 19 L 57 19 L 54 26 L 46 26 Z" fill="url(#laxSpindleGrad)" stroke="#1e293b" stroke-width="0.5"/>
+
+  <!-- Endmill Flute & Cutter Tip -->
+  <rect x="48.2" y="26" width="3.6" height="18" fill="url(#laxSpindleGrad)" stroke="#1e293b" stroke-width="0.4"/>
+  <!-- Helical Flutes (Cyan & Dark Grooves) -->
+  <line x1="48.2" y1="28" x2="51.8" y2="31" stroke="#00d2ff" stroke-width="1.2"/>
+  <line x1="48.2" y1="33" x2="51.8" y2="36" stroke="#00d2ff" stroke-width="1.2"/>
+  <line x1="48.2" y1="38" x2="51.8" y2="41" stroke="#00d2ff" stroke-width="1.2"/>
+  <!-- Sharp Cutting Tip Pointing to (50, 51) Origin -->
+  <polygon points="48.2 44, 51.8 44, 50 50.5" fill="#f8fafc" stroke="#00f2fe" stroke-width="0.6"/>
+
+  <!-- Laser Focal Glow Dot -->
+  <circle cx="50" cy="51" r="1.5" fill="#00f2fe"/>
+  <circle cx="50" cy="51" r="3.5" fill="none" stroke="#00f2fe" stroke-width="0.6" stroke-opacity="0.8"/>
+</svg>

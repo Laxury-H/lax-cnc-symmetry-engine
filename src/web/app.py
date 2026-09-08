@@ -70,6 +70,11 @@ def serve_index():
     return send_from_directory(STATIC_DIR, "index.html")
 
 
+@app.route("/favicon.ico")
+def serve_favicon():
+    return send_from_directory(STATIC_DIR, "favicon.svg", mimetype="image/svg+xml")
+
+
 @app.route("/<path:path>")
 def serve_static(path):
     return send_from_directory(STATIC_DIR, path)
@@ -83,7 +88,7 @@ def list_samples():
     if os.path.exists(default_no2):
         samples.append({
             "id": "sample_no2",
-            "name": "No2.dxf (Golden Test Pattern - Severely Distorted)",
+            "name": "Mẫu thử CNC",
             "path": default_no2
         })
     return jsonify({"samples": samples})

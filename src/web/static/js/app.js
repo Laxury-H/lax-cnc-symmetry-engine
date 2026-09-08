@@ -255,7 +255,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Quick Load Sample
   btnLoadSample.addEventListener('click', async () => {
-    setStatus('Đang nạp file mẫu No2.dxf...', true);
+    setStatus('Đang nạp file mẫu thử...', true);
     try {
       const resp = await fetch('/api/load-sample', {
         method: 'POST',
@@ -265,7 +265,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const data = await resp.json();
       if (data.error) throw new Error(data.error);
       handleAnalysisResult(data);
-      setStatus('Đã phân tích xong No2.dxf', false);
+      setStatus('Đã phân tích xong mẫu thử', false);
     } catch (err) {
       alert('Lỗi nạp mẫu: ' + err.message);
       setStatus('Lỗi', false);
@@ -505,66 +505,4 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  // Logo Switcher Logic
-  const brandLogoContainer = document.getElementById('brand-logo-container');
-  const logoModal = document.getElementById('logo-modal');
-  const btnCloseLogoModal = document.getElementById('btn-close-logo-modal');
-  const modalBackdrop = document.querySelector('.modal-backdrop');
-  const logoCards = document.querySelectorAll('.logo-card');
-
-  const logoTemplates = {
-    diamond: `<svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-      <polygon points="12 2 21 8.5 21 15.5 12 22 3 15.5 3 8.5" stroke="#00f2fe" stroke-width="1.8" fill="rgba(0, 242, 254, 0.15)"/>
-      <line x1="12" y1="1" x2="12" y2="23" stroke="#ff5722" stroke-width="2.2" stroke-linecap="round"/>
-      <polyline points="6.5 9 12 12.5 17.5 9" stroke="#fff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
-      <polyline points="6.5 15 12 11.5 17.5 15" stroke="#fff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
-      <circle cx="12" cy="12" r="2" fill="#ff5722"/>
-    </svg>`,
-    monogram_l: `<svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-      <path d="M6.5 4v14h4.5" stroke="#00f2fe" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
-      <path d="M17.5 4v14h-4.5" stroke="#00f2fe" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
-      <line x1="12" y1="2" x2="12" y2="22" stroke="#ff5722" stroke-width="2" stroke-dasharray="2.5 2.5"/>
-      <circle cx="12" cy="12" r="2.2" fill="#ff5722"/>
-    </svg>`,
-    spindle: `<svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-      <circle cx="12" cy="12" r="9" stroke="#38bdf8" stroke-width="1.8" stroke-dasharray="2 3"/>
-      <path d="M12 3a9 9 0 0 1 9 9h-9V3z" fill="rgba(0,242,254,0.25)" stroke="#00f2fe" stroke-width="1.6"/>
-      <path d="M12 21a9 9 0 0 1-9-9h9v9z" fill="rgba(0,242,254,0.25)" stroke="#00f2fe" stroke-width="1.6"/>
-      <circle cx="12" cy="12" r="3" fill="#ff5722"/>
-    </svg>`,
-    wings: `<svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-      <path d="M11 4L4 8l3 5-4 4 8 3V4z" fill="rgba(0,242,254,0.18)" stroke="#00f2fe" stroke-width="1.6" stroke-linejoin="round"/>
-      <path d="M13 4l7 4-3 5 4 4-8 3V4z" fill="rgba(0,242,254,0.18)" stroke="#00f2fe" stroke-width="1.6" stroke-linejoin="round"/>
-      <line x1="12" y1="2" x2="12" y2="22" stroke="#ff5722" stroke-width="2.2" stroke-linecap="round"/>
-      <circle cx="12" cy="12" r="2" fill="#fff"/>
-    </svg>`
-  };
-
-  function applyLogo(logoKey) {
-    if (logoTemplates[logoKey]) {
-      brandLogoContainer.innerHTML = logoTemplates[logoKey];
-      logoCards.forEach(c => c.classList.toggle('active', c.dataset.logo === logoKey));
-      localStorage.setItem('lax_cnc_logo', logoKey);
-    }
-  }
-
-  brandLogoContainer.addEventListener('click', () => {
-    logoModal.classList.remove('hidden');
-  });
-
-  const closeModal = () => logoModal.classList.add('hidden');
-  btnCloseLogoModal.addEventListener('click', closeModal);
-  modalBackdrop.addEventListener('click', closeModal);
-
-  logoCards.forEach(card => {
-    card.addEventListener('click', () => {
-      const selected = card.dataset.logo;
-      applyLogo(selected);
-      closeModal();
-    });
-  });
-
-  // Load saved logo
-  const savedLogo = localStorage.getItem('lax_cnc_logo') || 'diamond';
-  applyLogo(savedLogo);
 });
