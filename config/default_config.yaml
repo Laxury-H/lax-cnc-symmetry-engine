@@ -1,0 +1,30 @@
+version: "1.0.0"
+algorithm_version: "1.0.0"
+units: "mm"
+
+tolerances:
+  endpoint: 0.10          # mm: Max distance to consider two endpoints connected
+  gap: 0.10               # mm: Max gap distance to automatically close
+  duplicate: 0.05         # mm: Max distance to detect duplicate / overlapping entities
+  collinear_angle: 0.01   # radians: Angle tolerance for collinear segment merging
+  symmetry: 0.20          # mm: Symmetry tolerance for matching features
+
+confidence_thresholds:
+  auto_repair: 0.95       # >= 95% triggers AUTO REPAIR
+  review: 0.80            # 80% - 95% triggers REVIEW
+  unsafe: 0.80            # < 80% marked as MANUAL / UNSAFE
+
+repair_constraints:
+  preserve_overall_dimensions: true
+  preserve_outer_boundary: true
+  preserve_center: true
+  preserve_primitive_types: true  # Keep ARC, CIRCLE, SPLINE as primitives
+  max_dimension_deviation_mm: 0.50
+
+dxf_export:
+  version: "R2013"
+  layers:
+    outer_frame: "OUTER_FRAME"
+    cnc_cutout: "CNC_CUTOUT"
+    cnc_pocket: "CNC_POCKET"
+    symmetry_ref: "SYMMETRY_AXIS"

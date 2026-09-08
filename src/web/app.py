@@ -1,0 +1,524 @@
+"""
+Flask Web Application Backend for CNC Pattern Symmetry Repair Engine.
+Provides REST API for uploading, analyzing, repairing, and exporting CAD DXF models.
+"""
+
+from __future__ import annotations
+import os
+import uuid
+import json
+from typing import Dict, Any
+from flask import Flask, request, jsonify, send_file, send_from_directory
+from flask_cors import CORS
+
+from src.io.dxf_io import DXFImporter, DXFExporter, CADModel2D
+from src.symmetry.scorer import SymmetryAnalyzer
+from src.repair.engine import PatternRepairEngine
+from src.core.transform import SymmetryAxis2D
+from src.core.primitives import Point2D, LineSegment2D
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+STATIC_DIR = os.path.join(BASE_DIR, "static")
+UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
+OUTPUT_DIR = os.path.join(BASE_DIR, "outputs")
+
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+app = Flask(__name__, static_folder=STATIC_DIR)
+CORS(app)
+
+# In-memory storage for active sessions: {session_id: {"model": CADModel2D, "analysis": ..., "repaired": ...}}
+SESSIONS: Dict[str, Dict[str, Any]] = {}
+
+
+def serialize_model_to_json(model: CADModel2D) -> Dict[str, Any]:
+    """Serialize lines and arcs for frontend Canvas rendering."""
+    lines_data = []
+    for l in model.lines:
+        lines_data.append({
+            "x1": round(l.start.x, 3), "y1": round(l.start.y, 3),
+            "x2": round(l.end.x, 3), "y2": round(l.end.y, 3),
+            "layer": l.layer
+        })
+
+    arcs_data = []
+    for a in model.arcs:
+        arcs_data.append({
+            "cx": round(a.center.x, 3), "cy": round(a.center.y, 3),
+            "radius": round(a.radius, 3),
+            "start_ang": round(a.start_angle, 4),
+            "end_ang": round(a.end_angle, 4),
+            "is_ccw": a.is_ccw,
+            "layer": a.layer
+        })
+
+    bbox = model.bbox
+    return {
+        "lines": lines_data,
+        "arcs": arcs_data,
+        "bbox": {
+            "min_x": round(bbox.min_x, 2), "max_x": round(bbox.max_x, 2),
+            "min_y": round(bbox.min_y, 2), "max_y": round(bbox.max_y, 2),
+            "width": round(bbox.width, 2), "height": round(bbox.height, 2)
+        }
+    }
+
+
+@app.route("/")
+def serve_index():
+    return send_from_directory(STATIC_DIR, "index.html")
+
+
+@app.route("/<path:path>")
+def serve_static(path):
+    return send_from_directory(STATIC_DIR, path)
+
+
+@app.route("/api/samples", methods=["GET"])
+def list_samples():
+    samples = []
+    project_sample = os.path.abspath(os.path.join(BASE_DIR, "..", "..", "samples", "No2.dxf"))
+    default_no2 = project_sample if os.path.exists(project_sample) else r"C:\Users\Lax\Downloads\No2.dxf"
+    if os.path.exists(default_no2):
+        samples.append({
+            "id": "sample_no2",
+            "name": "No2.dxf (Golden Test Pattern - Severely Distorted)",
+            "path": default_no2
+        })
+    return jsonify({"samples": samples})
+
+
+@app.route("/api/load-sample", methods=["POST"])
+def load_sample():
+    data = request.json or {}
+    sample_id = data.get("sample_id")
+
+    if sample_id == "sample_no2":
+        project_sample = os.path.abspath(os.path.join(BASE_DIR, "..", "..", "samples", "No2.dxf"))
+        if os.path.exists(project_sample):
+            file_path = project_sample
+        else:
+            file_path = r"C:\Users\Lax\Downloads\No2.dxf"
+    else:
+        return jsonify({"error": "Unknown sample ID"}), 400
+
+    if not os.path.exists(file_path):
+        return jsonify({"error": "Sample file not found on disk"}), 404
+
+    return process_and_store_model(file_path, original_filename="No2.dxf")
+
+
+@app.route("/api/upload", methods=["POST"])
+def upload_file():
+    if "file" not in request.files:
+        return jsonify({"error": "No file uploaded"}), 400
+
+    file = request.files["file"]
+    if not file or file.filename == "":
+        return jsonify({"error": "Empty filename"}), 400
+
+    session_id = str(uuid.uuid4())[:8]
+    ext = os.path.splitext(file.filename)[1].lower()
+    if ext != ".dxf":
+        return jsonify({"error": "Currently only .DXF files are supported directly in web mode"}), 400
+
+    saved_path = os.path.join(UPLOAD_DIR, f"{session_id}_{file.filename}")
+    file.save(saved_path)
+
+    return process_and_store_model(saved_path, original_filename=file.filename, session_id=session_id)
+
+
+def process_and_store_model(file_path: str, original_filename: str, session_id: Optional[str] = None):
+    if not session_id:
+        session_id = str(uuid.uuid4())[:8]
+
+    try:
+        importer = DXFImporter(target_unit="mm")
+        model = importer.load(file_path)
+
+        analyzer = SymmetryAnalyzer(tolerance=0.20, endpoint_tolerance=0.10)
+        result = analyzer.analyze(model)
+
+        # Compute point deviation heatmap data
+        sampled_pts = model.get_all_sampled_points(num_samples_per_entity=10)
+        from src.spatial.index import PointSpatialIndex
+        spatial = PointSpatialIndex(sampled_pts)
+
+        heatmap_points = []
+        for p in sampled_pts:
+            rp = result.primary_axis.reflect_point(p)
+            _, dist, _ = spatial.nearest(rp)
+            heatmap_points.append({"x": round(p.x, 2), "y": round(p.y, 2), "dev": round(dist, 3)})
+
+        # Design Intent, Feature & Anchor Detection, Visual Quality Scoring
+        from src.features.extractor import FeatureExtractor
+        from src.anchors.detector import AnchorDetector
+        from src.intent.detector import DesignIntentDetector
+        from src.quality.scorer import VisualQualityScorer
+
+        fe = FeatureExtractor()
+        features = fe.extract(model)
+
+        vq_scorer = VisualQualityScorer()
+        vq_report = vq_scorer.score(model)
+
+        anchor_det = AnchorDetector()
+        anchors = anchor_det.detect_anchors(model)
+
+        intent_det = DesignIntentDetector()
+        intent = intent_det.detect_intent(features["lines"], features["loops"], model.bbox)
+
+        anchors_json = [a.to_dict() for a in anchors]
+        intent_json = intent.to_dict()
+        vq_json = vq_report.to_dict()
+
+        SESSIONS[session_id] = {
+            "original_path": file_path,
+            "filename": original_filename,
+            "model": model,
+            "analysis": result,
+            "features": features,
+            "anchors": anchors,
+            "intent": intent,
+            "visual_quality": vq_report,
+            "repaired_result": None
+        }
+
+        return jsonify({
+            "session_id": session_id,
+            "filename": original_filename,
+            "geometry": serialize_model_to_json(model),
+            "analysis": result.to_dict(),
+            "heatmap": heatmap_points,
+            "visual_quality": vq_json,
+            "anchors": anchors_json,
+            "intent": intent_json
+        })
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/candidates/<session_id>", methods=["GET"])
+def get_candidates(session_id: str):
+    if session_id not in SESSIONS:
+        return jsonify({"error": "Session not found"}), 404
+
+    session = SESSIONS[session_id]
+    model = session["model"]
+
+    try:
+        from src.repair.candidates import CandidateRepairGenerator
+        generator = CandidateRepairGenerator()
+        candidates = generator.generate_all(
+            model,
+            features=session.get("features"),
+            intent=session.get("intent")
+        )
+
+        cands_data = []
+        for c in candidates:
+            c_dict = c.to_dict()
+            c_dict["geometry"] = serialize_model_to_json(c.repaired_model)
+            cands_data.append(c_dict)
+
+        return jsonify({"candidates": cands_data})
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/update-model", methods=["POST"])
+def update_model():
+    """Update model with user manual edits (added/deleted lines), re-analyze, and export."""
+    data = request.json or {}
+    session_id = data.get("session_id")
+    lines_data = data.get("lines", [])
+
+    if session_id not in SESSIONS:
+        return jsonify({"error": "Session not found"}), 404
+
+    session = SESSIONS[session_id]
+    original_filename = session["filename"]
+
+    try:
+        lines = []
+        for ld in lines_data:
+            p1 = Point2D(float(ld["x1"]), float(ld["y1"]))
+            p2 = Point2D(float(ld["x2"]), float(ld["y2"]))
+            layer = ld.get("layer", "0")
+            if p1.distance_to(p2) > 1e-4:
+                lines.append(LineSegment2D(start=p1, end=p2, layer=layer))
+
+        orig_model = session["model"]
+        updated_model = CADModel2D(
+            lines=lines,
+            arcs=orig_model.arcs,
+            circles=orig_model.circles,
+            layers=orig_model.layers,
+            source_file=orig_model.source_file,
+            units="mm",
+            metadata={"manually_edited": True}
+        )
+
+        analyzer = SymmetryAnalyzer(tolerance=0.20, endpoint_tolerance=0.10)
+        result = analyzer.analyze(updated_model)
+
+        sampled_pts = updated_model.get_all_sampled_points(num_samples_per_entity=10)
+        from src.spatial.index import PointSpatialIndex
+        spatial = PointSpatialIndex(sampled_pts)
+
+        heatmap_points = []
+        for p in sampled_pts:
+            rp = result.primary_axis.reflect_point(p)
+            _, dist, _ = spatial.nearest(rp)
+            heatmap_points.append({"x": round(p.x, 2), "y": round(p.y, 2), "dev": round(dist, 3)})
+
+        from src.features.extractor import FeatureExtractor
+        from src.anchors.detector import AnchorDetector
+        from src.intent.detector import DesignIntentDetector
+        from src.quality.scorer import VisualQualityScorer
+
+        fe = FeatureExtractor()
+        features = fe.extract(updated_model)
+
+        vq_scorer = VisualQualityScorer()
+        vq_report = vq_scorer.score(updated_model)
+
+        anchor_det = AnchorDetector()
+        anchors = anchor_det.detect_anchors(updated_model)
+
+        intent_det = DesignIntentDetector()
+        intent = intent_det.detect_intent(features["lines"], features["loops"], updated_model.bbox)
+
+        # Export manually updated DXF
+        base_name = os.path.splitext(original_filename)[0]
+        out_filename = f"{session_id}_{base_name}_edited.dxf"
+        out_filepath = os.path.join(OUTPUT_DIR, out_filename)
+        exporter = DXFExporter(dxf_version="R2013")
+        exporter.export(updated_model, out_filepath)
+        session["manual_dxf_path"] = out_filepath
+
+        # Update session state
+        session["model"] = updated_model
+        session["analysis"] = result
+        session["features"] = features
+        session["anchors"] = anchors
+        session["intent"] = intent
+        session["visual_quality"] = vq_report
+
+        return jsonify({
+            "status": "success",
+            "session_id": session_id,
+            "filename": original_filename,
+            "geometry": serialize_model_to_json(updated_model),
+            "analysis": result.to_dict(),
+            "heatmap": heatmap_points,
+            "visual_quality": vq_report.to_dict(),
+            "anchors": [a.to_dict() for a in anchors],
+            "intent": intent.to_dict(),
+            "download_manual_url": f"/api/download-manual/{session_id}",
+            "manual_filename": f"{base_name}_edited.dxf"
+        })
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/download-manual/<session_id>", methods=["GET"])
+def download_manual(session_id: str):
+    if session_id not in SESSIONS:
+        return "Session not found", 404
+
+    session = SESSIONS[session_id]
+    dxf_path = session.get("manual_dxf_path")
+    if not dxf_path or not os.path.exists(dxf_path):
+        return "Manual edited file not found", 404
+
+    base_name = os.path.splitext(session["filename"])[0]
+    filename = f"{base_name}_edited.dxf"
+    response = send_file(
+        dxf_path,
+        as_attachment=True,
+        download_name=filename,
+        mimetype="application/dxf"
+    )
+    response.headers["Content-Disposition"] = f'attachment; filename="{filename}"'
+    return response
+
+
+@app.route("/api/repair", methods=["POST"])
+def repair_model():
+    data = request.json or {}
+    session_id = data.get("session_id")
+    strategy = data.get("strategy", "canonical_intent")
+    candidate_id = data.get("candidate_id")
+    straighten_boundary = data.get("straighten_boundary", True)
+
+    if session_id not in SESSIONS:
+        return jsonify({"error": "Session not found"}), 404
+
+    session = SESSIONS[session_id]
+    orig_model = session["model"]
+
+    try:
+        engine = PatternRepairEngine()
+
+        if candidate_id:
+            # User specifically selected a candidate hypothesis
+            from src.repair.candidates import CandidateRepairGenerator
+            generator = CandidateRepairGenerator()
+            candidates = generator.generate_all(
+                orig_model,
+                features=session.get("features"),
+                intent=session.get("intent")
+            )
+            matched = next((c for c in candidates if c.candidate_id == candidate_id), candidates[0])
+
+            # Use matched candidate
+            pre_symm = session["analysis"]
+            analyzer = SymmetryAnalyzer(tolerance=0.20, endpoint_tolerance=0.10)
+            post_symm = analyzer.analyze(matched.repaired_model)
+            pre_vq = session.get("visual_quality") or generator.quality_scorer.score(orig_model)
+            post_vq = matched.quality_score
+
+            from src.repair.engine import RepairResult
+            repair_res = RepairResult(
+                repaired_model=matched.repaired_model,
+                strategy_used=matched.strategy_name.lower(),
+                symmetry_score_before=pre_symm.primary_profile.symmetry_score,
+                symmetry_score_after=post_symm.primary_profile.symmetry_score,
+                max_deviation_before=pre_symm.primary_profile.max_deviation,
+                max_deviation_after=post_symm.primary_profile.max_deviation,
+                rms_deviation_before=pre_symm.primary_profile.rms_deviation,
+                rms_deviation_after=post_symm.primary_profile.rms_deviation,
+                is_watertight=matched.validation.is_watertight,
+                total_loops_repaired=len(matched.repaired_model.lines),
+                operations_log=[
+                    f"Applied Candidate {matched.candidate_id.upper()}: {matched.strategy_name}",
+                    f"Visual Quality: {post_vq.composite_quality:.2f} / 100",
+                    f"Symmetry Score: {post_symm.primary_profile.symmetry_score:.2f} / 100",
+                    f"Watertight: {matched.validation.is_watertight}, Duplicates: {matched.validation.duplicate_lines_count}"
+                ],
+                visual_quality_before=pre_vq.composite_quality,
+                visual_quality_after=post_vq.composite_quality,
+                spacing_score_before=pre_vq.spacing_score,
+                spacing_score_after=post_vq.spacing_score,
+                alignment_score_before=pre_vq.alignment_score,
+                alignment_score_after=post_vq.alignment_score,
+                angle_score_before=pre_vq.angle_score,
+                angle_score_after=post_vq.angle_score,
+                deformation_before=pre_vq.deformation_penalty,
+                deformation_after=post_vq.deformation_penalty,
+                verdict=post_vq.verdict,
+                candidates=[c.to_dict() for c in candidates]
+            )
+        else:
+            repair_res = engine.repair(
+                orig_model,
+                strategy=strategy,
+                straighten_boundary=straighten_boundary
+            )
+
+        session["repaired_result"] = repair_res
+
+        # Export repaired DXF
+        base_name = os.path.splitext(session["filename"])[0]
+        out_filename = f"{session_id}_{base_name}_repaired.dxf"
+        out_filepath = os.path.join(OUTPUT_DIR, out_filename)
+        exporter = DXFExporter(dxf_version="R2013")
+        exporter.export(repair_res.repaired_model, out_filepath)
+        session["repaired_dxf_path"] = out_filepath
+
+        dxf_download_name = f"{base_name}_repaired.dxf"
+        report_download_name = f"{base_name}_report.json"
+
+        return jsonify({
+            "status": "success",
+            "metrics": repair_res.to_dict(),
+            "repaired_geometry": serialize_model_to_json(repair_res.repaired_model),
+            "download_url": f"/api/download/{session_id}",
+            "download_report_url": f"/api/download-report/{session_id}",
+            "filename": dxf_download_name,
+            "report_filename": report_download_name
+        })
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/download/<session_id>", methods=["GET"])
+def download_repaired(session_id: str):
+    if session_id not in SESSIONS:
+        return "Session not found", 404
+
+    session = SESSIONS[session_id]
+    dxf_path = session.get("repaired_dxf_path")
+    if not dxf_path or not os.path.exists(dxf_path):
+        return "Repaired file not found", 404
+
+    base_name = os.path.splitext(session["filename"])[0]
+    filename = f"{base_name}_repaired.dxf"
+    response = send_file(
+        dxf_path,
+        as_attachment=True,
+        download_name=filename,
+        mimetype="application/dxf"
+    )
+    response.headers["Content-Disposition"] = f'attachment; filename="{filename}"'
+    return response
+
+
+@app.route("/api/download-report/<session_id>", methods=["GET"])
+def download_report(session_id: str):
+    if session_id not in SESSIONS:
+        return "Session not found", 404
+
+    session = SESSIONS[session_id]
+    base_name = os.path.splitext(session["filename"])[0]
+    filename = f"{base_name}_report.json"
+
+    report_data = {
+        "engine": "Lax's CNC SYMMETRY ENGINE",
+        "algorithm_version": "2.0 (Design Intent & Geometric Regularization)",
+        "file_name": session["filename"],
+        "pre_repair_analysis": session["analysis"].to_dict() if session.get("analysis") else None,
+        "pre_repair_visual_quality": session["visual_quality"].to_dict() if session.get("visual_quality") else None,
+        "design_intent": session["intent"].to_dict() if session.get("intent") else None,
+        "anchors": [a.to_dict() for a in session["anchors"]] if session.get("anchors") else None,
+        "repair_result": session["repaired_result"].to_dict() if session.get("repaired_result") else None
+    }
+
+    report_path = os.path.join(OUTPUT_DIR, f"{session_id}_{base_name}_report.json")
+    with open(report_path, "w", encoding="utf-8") as f:
+        json.dump(report_data, f, indent=2, ensure_ascii=False)
+
+    response = send_file(
+        report_path,
+        as_attachment=True,
+        download_name=filename,
+        mimetype="application/json"
+    )
+    response.headers["Content-Disposition"] = f'attachment; filename="{filename}"'
+    return response
+
+
+def start_server(port: int = None, host: str = None, debug: bool = False):
+    if port is None:
+        port = int(os.environ.get("PORT", 5000))
+    if host is None:
+        host = os.environ.get("HOST", "0.0.0.0")
+    print(f"\n==================================================")
+    print(f"  Lax's CNC SYMMETRY ENGINE - Web Server")
+    print(f"  Running on: http://{host}:{port}")
+    print(f"==================================================\n")
+    app.run(host=host, port=port, debug=debug)
+
+
+if __name__ == "__main__":
+    start_server()

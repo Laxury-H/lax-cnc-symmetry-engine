@@ -1,0 +1,33 @@
+# Python Virtual Environment
+.venv/
+venv/
+ENV/
+env/
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Pytest & test caches
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Temporary and CAD session directories
+src/web/uploads/*
+!src/web/uploads/.gitkeep
+src/web/outputs/*
+!src/web/outputs/.gitkeep
+scratch/
+
+# OS metadata
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE & Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
