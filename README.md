@@ -34,6 +34,10 @@
 
 ## 🚀 Hướng Dẫn Cài Đặt & Chạy Tại Local
 
+Bản nâng cấp giao diện, cách chọn phương án và số đo tốc độ được ghi trong
+[UPGRADE_NOTES.md](UPGRADE_NOTES.md). Chạy kiểm thử bằng `python -m pytest -q`
+và kiểm tra xử lý phản hồi giao diện bằng `node --test tests/test_api_response.cjs`.
+
 ### Yêu cầu hệ thống
 - Python 3.11, 3.12 hoặc 3.13
 - Git

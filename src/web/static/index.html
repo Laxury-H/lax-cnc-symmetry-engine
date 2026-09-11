@@ -10,6 +10,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/css/app.css">
+  <link rel="stylesheet" href="/css/workspace.css">
 </head>
 <body>
   <div class="app-container">
@@ -25,7 +26,7 @@
             <span class="brand-cnc">C<span class="brand-cnc-n">N</span>C</span>
             <span class="brand-suffix">SYMMETRY ENGINE</span>
           </div>
-          <span class="brand-subtitle">Automated Geometry Intelligence &amp; Repair</span>
+          <span class="brand-subtitle">Phân tích · So sánh · Chuẩn hóa hoa văn</span>
         </div>
       </div>
 
@@ -46,6 +47,14 @@
         </div>
       </div>
     </header>
+    <div class="workflow-bar">
+      <button id="btn-mobile-panel" class="btn btn-secondary btn-sm" aria-expanded="true">Xem bản vẽ</button>
+      <span class="workflow-step"><b>01</b> Nạp & chẩn đoán</span>
+      <span class="workflow-step"><b>02</b> So sánh & xem trước</span>
+      <span class="workflow-step"><b>03</b> Áp dụng & xuất DXF</span>
+      <span id="operation-time" aria-live="off"></span>
+    </div>
+    <div id="app-error" class="app-error hidden" role="alert"></div>
 
     <!-- Main Workspace -->
     <main class="main-workspace">
@@ -56,7 +65,7 @@
           <div class="card-header">
             <h3>Nhập File Pattern CNC</h3>
           </div>
-          <div id="dropzone" class="dropzone">
+          <div id="dropzone" class="dropzone" role="button" tabindex="0" aria-label="Chọn file DXF">
             <input type="file" id="file-input" accept=".dxf" hidden>
             <div class="dropzone-content">
               <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
@@ -79,7 +88,7 @@
           <div class="card-header">
             <div class="card-title-group" style="width: 100%;">
               <div class="card-title-top">
-                <span class="card-subtitle-tag">GEOMETRY AI</span>
+                <span class="card-subtitle-tag">01 / CHẨN ĐOÁN</span>
                 <span id="classification-badge" class="badge badge-default">Chưa nạp file</span>
               </div>
               <h3 class="card-title-full">Chẩn Đoán Hình Học & Thẩm Mỹ</h3>
@@ -89,7 +98,7 @@
           <!-- Hero Visual Quality Gauge -->
           <div class="visual-quality-hero">
             <div class="vq-score-display">
-              <span class="vq-label">CHỈ SỐ THẨM MỸ TỔNG HỢP</span>
+              <span class="vq-label">CHẤT LƯỢNG HÌNH HỌC</span>
               <div class="vq-val-group">
                 <span id="metric-visual-quality" class="vq-value">--</span>
                 <span class="vq-unit">/100</span>
@@ -163,75 +172,19 @@
           <div class="card-header">
             <div class="card-title-group" style="width: 100%;">
               <div class="card-title-top">
-                <span class="card-subtitle-tag">DESIGN INTENT</span>
-                <span class="badge badge-primary">Multi-Hypothesis</span>
+                <span class="card-subtitle-tag">02 / PHƯƠNG ÁN</span>
+                <span class="badge badge-primary">4 phương án</span>
               </div>
-              <h3 class="card-title-full">Phương Án Tái Tạo Hoa Văn</h3>
+              <h3 class="card-title-full">So sánh & chọn phương án</h3>
             </div>
           </div>
 
-          <div class="strategy-selector">
-            <label class="strategy-option candidate-option active" data-candidate="candidate_a">
-              <input type="radio" name="strategy" value="canonical_intent" checked>
-              <div class="option-body">
-                <div class="opt-header">
-                  <strong>Phương Án A: Canonical Intent</strong>
-                  <span class="rec-tag">TỐI ƯU NHẤT</span>
-                </div>
-                <p class="cand-desc">Đồng bộ 4 góc motif bằng nhau, nắn góc xiên, căn đều khe cắt CNC, triệt tiêu móp méo.</p>
-                <div class="cand-stats">
-                  <span class="cand-stat-pill">Thẩm mỹ: <b id="cand-a-vq">97.3</b>/100</span>
-                  <span class="cand-stat-pill">Đối xứng: <b id="cand-a-symm">98.0</b>%</span>
-                  <span class="cand-stat-pill cand-stat-pill-success">Móp méo: <b id="cand-a-deform">0.0%</b></span>
-                </div>
-              </div>
-            </label>
-
-            <label class="strategy-option candidate-option" data-candidate="candidate_b">
-              <input type="radio" name="strategy" value="4_quadrant_regularized">
-              <div class="option-body">
-                <div class="opt-header">
-                  <strong>Phương Án B: 4-Quadrant Regularized</strong>
-                </div>
-                <p class="cand-desc">Nhân bản 1/4 góc sang 4 góc kết hợp nắn thẳng các góc xiên.</p>
-                <div class="cand-stats">
-                  <span class="cand-stat-pill">Thẩm mỹ: <b id="cand-b-vq">95.8</b>/100</span>
-                  <span class="cand-stat-pill">Đối xứng: <b id="cand-b-symm">100.0</b>%</span>
-                  <span class="cand-stat-pill cand-stat-pill-success">Móp méo: <b id="cand-b-deform">0.0%</b></span>
-                </div>
-              </div>
-            </label>
-
-            <label class="strategy-option candidate-option" data-candidate="candidate_c">
-              <input type="radio" name="strategy" value="mirror_left_to_right">
-              <div class="option-body">
-                <div class="opt-header">
-                  <strong>Phương Án C: Bilateral L ➔ R</strong>
-                </div>
-                <p class="cand-desc">Giữ nguyên nửa hoa văn chuẩn bên trái và lật sang bên phải.</p>
-                <div class="cand-stats">
-                  <span class="cand-stat-pill">Thẩm mỹ: <b id="cand-c-vq">94.2</b>/100</span>
-                  <span class="cand-stat-pill">Đối xứng: <b id="cand-c-symm">100.0</b>%</span>
-                  <span class="cand-stat-pill cand-stat-pill-success">Móp méo: <b id="cand-c-deform">0.0%</b></span>
-                </div>
-              </div>
-            </label>
-
-            <label class="strategy-option candidate-option" data-candidate="candidate_d">
-              <input type="radio" name="strategy" value="minimum_change">
-              <div class="option-body">
-                <div class="opt-header">
-                  <strong>Phương Án D: Can Thiệp Tối Thiểu</strong>
-                </div>
-                <p class="cand-desc">Chỉ nắn các nét bị xiên nhẹ, giữ nguyên 100% bố cục và motif gốc.</p>
-                <div class="cand-stats">
-                  <span class="cand-stat-pill">Thẩm mỹ: <b id="cand-d-vq">82.5</b>/100</span>
-                  <span class="cand-stat-pill">Thay đổi: <b>3.1%</b></span>
-                </div>
-              </div>
-            </label>
+          <div id="candidate-summary" class="candidate-summary" role="status">Nạp bản vẽ để tính và so sánh phương án.</div>
+          <div id="candidate-list" class="strategy-selector" aria-label="Phương án sửa hoa văn"></div>
+          <div class="preview-actions">
+            <button id="btn-preview-original" class="btn btn-secondary btn-sm" disabled>Xem bản gốc</button>
+            <span id="preview-label">Chưa chọn phương án</span>
           </div>
-
           <div class="option-checkbox">
             <label>
               <input type="checkbox" id="chk-straighten" checked>
@@ -250,10 +203,10 @@
         <!-- Export Card -->
         <div id="export-card" class="card export-card hidden">
           <div class="card-header">
-            <h3>Xuất File CNC Chuẩn</h3>
+            <h3>03 / Xuất bản vẽ</h3>
             <span class="badge badge-success">Sẵn sàng xuất</span>
           </div>
-          <p class="export-desc">Geometry đã được chuẩn hóa đạt độ đối xứng 100%, kín nước, sẵn sàng đưa vào CAM nesting.</p>
+          <p class="export-desc">Xuất bản vẽ của phương án đã áp dụng. Kiểm tra lại kích thước, đường chạy dao và mô phỏng CAM trước khi cắt.</p>
           <div class="export-buttons" style="display: flex; flex-direction: column; gap: 8px;">
             <a id="btn-download-dxf" class="btn btn-success btn-block" href="#" download="repaired_pattern.dxf">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -411,7 +364,7 @@
               <span class="color-dot" style="background:#a855f7;"></span> Điểm Neo
             </label>
             <label class="toggle-pill active hidden" id="toggle-repaired" title="Bật/Tắt nét đã sửa">
-              <span class="color-dot dot-repaired"></span> Nét Đã Sửa
+              <span class="color-dot dot-repaired"></span> Phương Án
             </label>
           </div>
 

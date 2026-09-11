@@ -56,6 +56,11 @@ class SymmetryEvaluator:
         self.spatial_index = PointSpatialIndex(sample_points)
         self.loops = loops or []
         self.tolerance = tolerance
+        self.coordinates = np.array([[p.x, p.y] for p in sample_points], dtype=np.float64).reshape(-1, 2)
+
+    def deviations(self, axis: SymmetryAxis2D) -> np.ndarray:
+        distances, _ = self.spatial_index.nearest_batch(axis.reflect_coordinates(self.coordinates))
+        return distances
 
     def evaluate(self, axis: SymmetryAxis2D) -> SymmetryErrorProfile:
         """Compute full error metrics for the given axis."""
@@ -68,17 +73,8 @@ class SymmetryEvaluator:
                 symmetry_score=0.0, confidence=0.0
             )
 
-        deviations: List[float] = []
-        matched_count = 0
-
-        for pt in self.sample_points:
-            refl_pt = axis.reflect_point(pt)
-            nearest_pt, dist, _ = self.spatial_index.nearest(refl_pt)
-            deviations.append(dist)
-            if dist <= self.tolerance:
-                matched_count += 1
-
-        devs = np.array(deviations, dtype=np.float64)
+        devs = self.deviations(axis)
+        matched_count = int(np.count_nonzero(devs <= self.tolerance))
         mean_dev = float(np.mean(devs))
         rms_dev = float(np.sqrt(np.mean(devs ** 2)))
         median_dev = float(np.median(devs))

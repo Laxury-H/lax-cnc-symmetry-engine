@@ -50,6 +50,7 @@ class RepairCandidate:
             "deformation_penalty": self.quality_score.deformation_penalty,
             "change_ratio_percent": round(self.change_ratio_percent, 2),
             "is_valid": self.validation.is_valid,
+            "validation": self.validation.to_dict(),
             "objective_cost": round(self.objective_cost, 2),
             "verdict": self.quality_score.verdict
         }
@@ -60,11 +61,12 @@ class CandidateRepairGenerator:
     Generates and evaluates multiple candidate repair hypotheses.
     """
 
-    def __init__(self, kerf_tolerance_mm: float = 0.5):
+    def __init__(self, kerf_tolerance_mm: float = 0.5, straighten_boundary: bool = True):
         self.kerf_tolerance = kerf_tolerance_mm
         self.quality_scorer = VisualQualityScorer()
         self.validator = ModelValidator()
         self.angle_regularizer = AngleRegularizer(snap_tolerance_deg=4.0)
+        self.straighten_boundary = straighten_boundary
 
     def generate_all(
         self,
@@ -80,6 +82,7 @@ class CandidateRepairGenerator:
         features: Optional[Dict[str, Any]] = None,
         intent: Optional[DesignIntentReport] = None
     ) -> List[RepairCandidate]:
+        self._quadrant_base = None
         if features is None:
             fe = FeatureExtractor()
             features = fe.extract(model)
@@ -109,9 +112,23 @@ class CandidateRepairGenerator:
         c_d = self._generate_minimum_change(model, intent)
         candidates.append(c_d)
 
-        # Sort by objective cost (lowest cost first)
-        candidates.sort(key=lambda c: c.objective_cost)
+        # Never recommend invalid geometry just because its quality score is high.
+        for candidate in candidates:
+            if not candidate.repaired_model.lines:
+                candidate.validation.is_valid = False
+                candidate.validation.validation_errors.append("Phương án không chứa nét cắt.")
+            if model.arcs and len(candidate.repaired_model.arcs) != len(model.arcs):
+                candidate.validation.is_valid = False
+                candidate.validation.validation_errors.append("Phương án làm mất cung tròn của bản gốc.")
+        candidates.sort(key=lambda c: (not c.validation.is_valid, c.objective_cost, c.candidate_id))
         return candidates
+
+    def _get_quadrant_base(self, model):
+        from src.repair.engine import PatternRepairEngine
+        if self._quadrant_base is None:
+            self._quadrant_base = PatternRepairEngine().repair(
+                model, strategy="4_quadrant", straighten_boundary=self.straighten_boundary)
+        return self._quadrant_base
 
     def _generate_canonical_intent(
         self,
@@ -119,9 +136,7 @@ class CandidateRepairGenerator:
         loops: List[LoopFeature],
         intent: DesignIntentReport
     ) -> RepairCandidate:
-        from src.repair.engine import PatternRepairEngine
-        engine = PatternRepairEngine()
-        base_res = engine.repair(model, strategy="4_quadrant", straighten_boundary=True)
+        base_res = self._get_quadrant_base(model)
 
         # Regularize all loops while preserving exact vertex closure
         graph = TopologyGraph.from_cad_model(base_res.repaired_model)
@@ -213,9 +228,7 @@ class CandidateRepairGenerator:
         loops: List[LoopFeature],
         intent: DesignIntentReport
     ) -> RepairCandidate:
-        from src.repair.engine import PatternRepairEngine
-        engine = PatternRepairEngine()
-        res = engine.repair(model, strategy="4_quadrant", straighten_boundary=True)
+        res = self._get_quadrant_base(model)
 
         graph = TopologyGraph.from_cad_model(res.repaired_model)
         cycle_loops = CycleFinder(graph).extract_loops()
@@ -257,7 +270,7 @@ class CandidateRepairGenerator:
     ) -> RepairCandidate:
         from src.repair.engine import PatternRepairEngine
         engine = PatternRepairEngine()
-        res = engine.repair(model, strategy="mirror_left_to_right", straighten_boundary=True)
+        res = engine.repair(model, strategy="mirror_left_to_right", straighten_boundary=self.straighten_boundary)
 
         graph = TopologyGraph.from_cad_model(res.repaired_model)
         cycle_loops = CycleFinder(graph).extract_loops()
@@ -344,22 +357,20 @@ class CandidateRepairGenerator:
 
     def _compute_change_ratio(self, original: CADModel2D, repaired: CADModel2D) -> float:
         if not original.lines or not repaired.lines:
-            return 0.0
+            return 0.0 if not original.lines and not repaired.lines else 100.0
         n_orig = len(original.lines)
         n_rep = len(repaired.lines)
         count_diff = abs(n_orig - n_rep) / max(n_orig, 1)
 
-        orig_pts = [l.midpoint for l in original.lines[:min(50, n_orig)]]
-        rep_pts = [l.midpoint for l in repaired.lines[:min(50, n_rep)]]
-        shifts = []
-        for op in orig_pts:
-            dists = [op.distance_to(rp) for rp in rep_pts]
-            shifts.append(min(dists) if dists else 0.0)
-
-        mean_shift = float(np.mean(shifts)) if shifts else 0.0
+        from src.spatial.index import PointSpatialIndex
+        orig_pts = [l.midpoint for l in original.lines]
+        rep_pts = [l.midpoint for l in repaired.lines]
+        forward, _ = PointSpatialIndex(rep_pts).nearest_batch([[p.x, p.y] for p in orig_pts])
+        backward, _ = PointSpatialIndex(orig_pts).nearest_batch([[p.x, p.y] for p in rep_pts])
+        mean_shift = float((np.mean(forward) + np.mean(backward)) * 0.5)
         shift_ratio = min(1.0, mean_shift / 25.0)
 
-        return (0.5 * count_diff + 0.5 * shift_ratio) * 100.0
+        return min(100.0, (0.5 * count_diff + 0.5 * shift_ratio) * 100.0)
 
     def _deduplicate_lines(self, lines: List[LineSegment2D], tol: float = 0.05) -> List[LineSegment2D]:
         unique: List[LineSegment2D] = []

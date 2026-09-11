@@ -640,6 +640,15 @@ class CADViewer {
   // --- Rendering Pipeline ---
 
   render() {
+    if (this.renderPending) return;
+    this.renderPending = true;
+    requestAnimationFrame(() => {
+      this.renderPending = false;
+      this.drawFrame();
+    });
+  }
+
+  drawFrame() {
     const ctx = this.ctx;
     ctx.clearRect(0, 0, this.cssWidth, this.cssHeight);
 

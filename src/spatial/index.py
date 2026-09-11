@@ -33,6 +33,13 @@ class PointSpatialIndex:
         dist, idx = self._tree.query([query_pt.x, query_pt.y], k=1)
         return (self.points[idx], float(dist), int(idx))
 
+    def nearest_batch(self, coords: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        """Exact nearest neighbors for an (N, 2) array, without Python point loops."""
+        coords = np.asarray(coords, dtype=np.float64).reshape(-1, 2)
+        if self._tree is None:
+            return np.full(len(coords), np.inf), np.full(len(coords), -1, dtype=int)
+        return self._tree.query(coords, k=1)
+
     def query_radius(self, query_pt: Point2D, radius: float) -> List[Tuple[Point2D, float, int]]:
         """Find all points within radius. Returns list of (point, distance, index)."""
         if self._tree is None or len(self.points) == 0:

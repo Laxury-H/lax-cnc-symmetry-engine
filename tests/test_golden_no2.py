@@ -4,16 +4,17 @@ Analyzes the real CNC pattern, extracts topology, detects symmetry axis, and com
 """
 
 import os
+from pathlib import Path
 import pytest
 from src.io.dxf_io import DXFImporter
 from src.topology.graph import TopologyGraph
 from src.topology.cycle_finder import CycleFinder
 from src.symmetry.scorer import SymmetryAnalyzer
 
-NO2_DXF_PATH = r"C:\Users\Lax\Downloads\No2.dxf"
+NO2_DXF_PATH = str(Path(__file__).resolve().parents[1] / "samples" / "No2.dxf")
 
 
-@pytest.mark.skipif(not os.path.exists(NO2_DXF_PATH), reason="No2.dxf not present in Downloads")
+
 def test_no2_dxf_phase1_analysis():
     importer = DXFImporter(target_unit="mm")
     model = importer.load(NO2_DXF_PATH)

@@ -1,0 +1,84 @@
+/* Quiet CAD workspace: measured states and readable comparison cards. */
+:root {
+  --bg-primary: #0b1019;
+  --bg-secondary: #111927;
+  --bg-tertiary: #1b2638;
+  --bg-card: #151f2f;
+  --accent-cyan: #65d6d0;
+  --text-secondary: #b3c1d3;
+  --text-muted: #93a5bd;
+  --border-color: #29374b;
+}
+body, .app-container { height: 100dvh; }
+.top-nav { padding: 14px 22px; }
+.brand-logo-img, .brand:hover .brand-logo-img { filter: none; }
+.brand-cnc, .brand-cnc-n { text-shadow: none; }
+.brand-subtitle { margin-top: 4px; }
+.workflow-bar { display: flex; align-items: center; gap: 28px; padding: 10px 22px; background: #0e1623; border-bottom: 1px solid var(--border-color); font-size: 12px; color: var(--text-secondary); }
+.workflow-step { display: flex; align-items: center; gap: 8px; }
+.workflow-step b { font: 11px var(--font-mono); color: var(--accent-cyan); border: 1px solid #355452; border-radius: 6px; padding: 3px 5px; }
+#operation-time { margin-left: auto; color: var(--accent-cyan); font-variant-numeric: tabular-nums; }
+#btn-mobile-panel { display: none; }
+.viewport-section { min-width: 0; }
+.sidebar { width: 420px; padding: 16px; gap: 14px; }
+.main-workspace { min-height: 0; overflow: clip; }
+.sidebar { min-height: 0; overscroll-behavior: contain; }
+.card { padding: 16px; border-radius: 12px; backdrop-filter: none; box-shadow: none; }
+.dropzone { padding: 16px; min-height: 100px; background: #101b2a; border-color: #3a506a; }
+.dropzone.busy { opacity: .55; pointer-events: none; }
+.dropzone-content svg { width: 28px; height: 28px; }
+.status-dot { box-shadow: none !important; }
+.status-indicator.loading .status-dot { background: var(--accent-amber); animation: status-pulse 1.2s ease-in-out infinite; }
+@keyframes status-pulse { 50% { opacity: .35; } }
+.candidate-summary { color: var(--text-secondary); border-left: 2px solid var(--accent-cyan); padding: 2px 0 2px 12px; font-size: 12px; line-height: 1.65; }
+.strategy-selector { gap: 10px; }
+.strategy-option { position: relative; padding: 13px; border-radius: 9px; background: #101a28; box-shadow: none; cursor: pointer; }
+.strategy-option.active { background: #152e35; border-color: #65d6d0; box-shadow: none; }
+.strategy-option.invalid { border-color: #946246; }
+.strategy-option:focus-within { outline: 2px solid #8ce8e2; outline-offset: 2px; }
+.strategy-option input { position: absolute; top: 12px; left: 12px; opacity: 0; width: 1px; height: 1px; }
+.opt-header { flex-wrap: wrap; gap: 6px; }
+.opt-header strong { font-size: 13px; }
+.rec-tag { background: #294d42; color: #b6f1cf; font-size: 9px; border: 0; padding: 3px 6px; }
+.candidate-metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 12px 0 8px; }
+.candidate-metrics div { display: flex; flex-direction: column; gap: 3px; }
+.candidate-metrics span { color: var(--text-muted); font-size: 10px; }
+.candidate-metrics strong { font: 13px var(--font-mono); color: #f0f6ff; }
+.candidate-validity { font-size: 11px; line-height: 1.5; color: #a7cabd; }
+.invalid .candidate-validity { color: #ffba92; }
+.change-note { color: var(--text-muted); font-size: 10px; line-height: 1.6; }
+.preview-actions { display: flex; gap: 10px; align-items: center; }
+#preview-label { color: var(--text-secondary); font-size: 11px; }
+.btn { border-radius: 7px; }
+.btn-primary { background: #65d6d0; color: #0b222a; text-shadow: none; box-shadow: none; font-weight: 750; }
+.btn-primary:hover:not(:disabled) { background: #98ece7; box-shadow: none; }
+.btn:disabled { opacity: .4; cursor: not-allowed; }
+.cad-prompt-banner { border-color: #35485f; box-shadow: none; border-radius: 8px; }
+.heatmap-legend { box-shadow: none; border-color: #35485f; }
+.app-error { padding: 10px 22px; color: #ffdabd; background: #39291f; border-bottom: 1px solid #735038; font-size: 13px; }
+button:focus-visible, a:focus-visible, .dropzone:focus-visible { outline: 2px solid #8ce8e2; outline-offset: 3px; }
+@media (max-width: 1000px) { .sidebar { width: 360px; } .workflow-bar { gap: 14px; } }
+@media (max-width: 992px) {
+  #btn-mobile-panel { display: inline-flex; }
+  .viewport-toolbar { overflow-x: auto; flex-shrink: 0; }
+  .viewport-toolbar { scrollbar-width: thin; scrollbar-color: #536b87 #101927; }
+  .toolbar-group { flex-shrink: 0; }
+  .floating-layer-bar { max-width: calc(100% - 20px); flex-wrap: wrap; justify-content: center; }
+}
+@media (max-width: 700px) {
+  .top-nav { padding: 10px 12px; flex-wrap: wrap; gap: 10px; }
+  .nav-actions { width: 100%; justify-content: space-between; }
+  .workflow-bar { padding: 8px 12px; gap: 10px; flex-wrap: wrap; font-size: 10px; }
+  .workflow-step { gap: 4px; }
+  #operation-time { width: 100%; margin-left: 0; }
+  .sidebar { width: 100%; }
+  .coords-display { display: none; }
+  .floating-layer-bar { width: calc(100% - 20px); border-radius: 8px; }
+  .workflow-step { display: none; }
+  #operation-time { width: auto; margin-left: auto; }
+  .cad-prompt-banner { left: 10px; bottom: 10px; max-width: calc(100% - 20px); }
+  .heatmap-legend { right: 10px; bottom: 52px; width: 230px; }
+  .brand-suffix { font-size: 11px; }
+  .candidate-metrics strong { font-size: 12px; }
+}
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }

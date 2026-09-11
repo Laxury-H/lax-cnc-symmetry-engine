@@ -13,15 +13,16 @@ Verifies that repair achieves:
 """
 
 import os
+from pathlib import Path
 import pytest
 from src.io.dxf_io import DXFImporter
 from src.repair.engine import PatternRepairEngine
 from src.repair.candidates import CandidateRepairGenerator
 
-NO2_DXF_PATH = r"C:\Users\Lax\Downloads\No2.dxf"
+NO2_DXF_PATH = str(Path(__file__).resolve().parents[1] / "samples" / "No2.dxf")
 
 
-@pytest.mark.skipif(not os.path.exists(NO2_DXF_PATH), reason="No2.dxf not present in Downloads")
+
 def test_no2_canonical_intent_regularization():
     importer = DXFImporter(target_unit="mm")
     model = importer.load(NO2_DXF_PATH)
@@ -54,7 +55,7 @@ def test_no2_canonical_intent_regularization():
     assert rep_bbox.height == pytest.approx(orig_bbox.height, abs=1.0)
 
 
-@pytest.mark.skipif(not os.path.exists(NO2_DXF_PATH), reason="No2.dxf not present in Downloads")
+
 def test_no2_multi_hypothesis_candidate_generation():
     importer = DXFImporter(target_unit="mm")
     model = importer.load(NO2_DXF_PATH)

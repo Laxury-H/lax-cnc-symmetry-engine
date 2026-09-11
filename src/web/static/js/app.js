@@ -78,7 +78,40 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // State
   let currentSessionId = null;
-  let currentCandidateId = 'candidate_a';
+  let currentCandidateId = null;
+  let candidateMap = new Map();
+  let candidateVersion = 0;
+  let operationStarted = 0;
+  let operationTimer = null;
+  let isBusy = false;
+  const candidateList = document.getElementById('candidate-list');
+  const candidateSummary = document.getElementById('candidate-summary');
+  const previewOriginal = document.getElementById('btn-preview-original');
+  const previewLabel = document.getElementById('preview-label');
+  const straightenCheckbox = document.getElementById('chk-straighten');
+
+  function showError(message) {
+    const error = document.getElementById('app-error');
+    error.textContent = message;
+    error.classList.remove('hidden');
+  }
+
+  function invalidateCandidates(message) {
+    candidateVersion++;
+    candidateMap.clear();
+    currentCandidateId = null;
+    candidateList.replaceChildren();
+    candidateSummary.textContent = message;
+    btnApplyRepair.disabled = true;
+    previewOriginal.disabled = true;
+    previewLabel.textContent = 'Chưa chọn phương án';
+    viewer.repairedModel = null;
+    viewer.layers.repaired = false;
+    exportCard.classList.add('hidden');
+    document.getElementById('toggle-repaired').classList.add('hidden');
+    viewer.render();
+  }
+
 
   // Viewport Coordinates callback
   viewer.onCoordsUpdate = (wx, wy) => {
@@ -107,13 +140,16 @@ document.addEventListener('DOMContentLoaded', () => {
   // Sidebar Collapse / Expand Toggle
   const btnToggleSidebar = document.getElementById('btn-toggle-sidebar');
   const sidebar = document.querySelector('.sidebar');
+  const mobilePanel = document.getElementById('btn-mobile-panel');
   if (btnToggleSidebar && sidebar) {
-    btnToggleSidebar.addEventListener('click', () => {
-      sidebar.classList.toggle('collapsed');
-      setTimeout(() => {
-        viewer.handleResize();
-      }, 50);
-    });
+    const toggleSidebar = () => {
+      const collapsed = sidebar.classList.toggle('collapsed');
+      mobilePanel.textContent = collapsed ? 'Mở điều khiển' : 'Xem bản vẽ';
+      mobilePanel.setAttribute('aria-expanded', String(!collapsed));
+      requestAnimationFrame(() => viewer.resize());
+    };
+    btnToggleSidebar.addEventListener('click', toggleSidebar);
+    mobilePanel.addEventListener('click', toggleSidebar);
   }
 
   if (btnCloseInsp) {
@@ -157,6 +193,7 @@ document.addEventListener('DOMContentLoaded', () => {
   };
 
   viewer.onGeometryChange = (lines) => {
+    invalidateCandidates('Bản vẽ đã thay đổi. Bấm đồng bộ để tính lại phương án.');
     if (btnSyncReanalyze) {
       btnSyncReanalyze.classList.remove('hidden');
     }
@@ -170,7 +207,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // Sync & Re-Analyze Modified Model
   if (btnSyncReanalyze) {
     btnSyncReanalyze.addEventListener('click', async () => {
-      if (!currentSessionId || !viewer.originalModel) return;
+      if (!currentSessionId || !viewer.originalModel || isBusy) return;
 
       setStatus('Đang đồng bộ thay đổi thủ công & phân tích lại...', true);
       btnSyncReanalyze.disabled = true;
@@ -189,10 +226,12 @@ document.addEventListener('DOMContentLoaded', () => {
         if (data.error) throw new Error(data.error);
 
         // Update metrics on screen
-        handleAnalysisResult(data);
+        await handleAnalysisResult(data);
 
         // Show manual download button in export card
         exportCard.classList.remove('hidden');
+        btnDownloadDxf.classList.add('hidden');
+        btnDownloadJson.classList.add('hidden');
         if (btnDownloadManualDxf) {
           btnDownloadManualDxf.classList.remove('hidden');
           btnDownloadManualDxf.href = data.download_manual_url;
@@ -203,7 +242,7 @@ document.addEventListener('DOMContentLoaded', () => {
         btnSyncReanalyze.disabled = false;
         setStatus('Đồng bộ & phân tích lại thành công!', false);
       } catch (err) {
-        alert('Lỗi đồng bộ: ' + err.message);
+        showError('Lỗi đồng bộ: ' + err.message);
         setStatus('Lỗi đồng bộ', false);
         btnSyncReanalyze.disabled = false;
       }
@@ -226,6 +265,7 @@ document.addEventListener('DOMContentLoaded', () => {
       el.addEventListener('click', () => {
         const isVisible = viewer.toggleLayer(layerKey);
         el.classList.toggle('active', isVisible);
+        if (layerKey === 'heatmap') heatmapLegend.classList.toggle('hidden', !isVisible);
       });
     }
   });
@@ -275,6 +315,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Quick Load Sample
   btnLoadSample.addEventListener('click', async () => {
+    invalidateCandidates('Đang nạp bản vẽ…');
     setStatus('Đang nạp file mẫu thử...', true);
     try {
       const resp = await fetch('/api/load-sample', {
@@ -284,21 +325,23 @@ document.addEventListener('DOMContentLoaded', () => {
       });
       const data = await readApiResponse(resp);
       if (data.error) throw new Error(data.error);
-      handleAnalysisResult(data);
+      await handleAnalysisResult(data);
       setStatus('Đã phân tích xong mẫu thử', false);
     } catch (err) {
-      alert('Lỗi nạp mẫu: ' + err.message);
+      showError('Lỗi nạp mẫu: ' + err.message);
       setStatus('Lỗi', false);
     }
   });
 
   // Upload handler
   async function uploadFile(file) {
+    if (isBusy) return;
     if (!file.name.toLowerCase().endsWith('.dxf')) {
-      alert('Hiện tại hỗ trợ file định dạng .DXF');
+      showError('Hiện tại hỗ trợ file định dạng .DXF');
       return;
     }
 
+    invalidateCandidates('Đang nạp bản vẽ…');
     setStatus(`Đang tải & phân tích ${file.name}...`, true);
     const formData = new FormData();
     formData.append('file', file);
@@ -310,16 +353,16 @@ document.addEventListener('DOMContentLoaded', () => {
       });
       const data = await readApiResponse(resp);
       if (data.error) throw new Error(data.error);
-      handleAnalysisResult(data);
+      await handleAnalysisResult(data);
       setStatus(`Đã phân tích ${file.name}`, false);
     } catch (err) {
-      alert('Lỗi xử lý file: ' + err.message);
+      showError('Lỗi xử lý file: ' + err.message);
       setStatus('Lỗi', false);
     }
   }
 
   // Handle analysis response
-  function handleAnalysisResult(data) {
+  async function handleAnalysisResult(data) {
     currentSessionId = data.session_id;
 
     // Hide empty overlay, show info bar & heatmap legend
@@ -376,71 +419,122 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // Enable Repair button
-    btnApplyRepair.disabled = false;
+    btnApplyRepair.disabled = true;
 
     // Load to viewer with anchors
     viewer.setModelData(data.geometry, axis, data.heatmap, data.anchors);
+    viewer.layers.heatmap = true;
+    document.getElementById('toggle-heatmap').classList.add('active');
+    btnDownloadDxf.classList.remove('hidden');
+    btnDownloadJson.classList.remove('hidden');
+    btnDownloadManualDxf.classList.add('hidden');
 
     // Fetch dynamic candidates
-    loadCandidates(data.session_id);
+    await loadCandidates(data.session_id);
   }
 
-  // Load and populate candidate hypotheses
+  // Render measured candidates; labels never carry sample scores.
   async function loadCandidates(sessionId) {
+    invalidateCandidates('Đang tính 4 phương án và kiểm tra hình học…');
+    const version = candidateVersion;
+    setStatus('Đang so sánh các phương án…', true);
     try {
-      const resp = await fetch(`/api/candidates/${sessionId}`);
+      const resp = await fetch(`/api/candidates/${sessionId}?straighten_boundary=${straightenCheckbox.checked}`);
       const data = await readApiResponse(resp);
-      if (!data.candidates) return;
-
+      if (version !== candidateVersion || sessionId !== currentSessionId) return;
+      candidateMap = new Map(data.candidates.map(c => [c.candidate_id, c]));
+      const names = {candidate_a: 'A · Chuẩn hóa họa tiết', candidate_b: 'B · Đối xứng bốn góc',
+        candidate_c: 'C · Phản chiếu trái → phải', candidate_d: 'D · Nắn chỉnh tối thiểu'};
       data.candidates.forEach(c => {
-        if (c.id === 'candidate_a') {
-          const elVq = document.getElementById('cand-a-vq');
-          const elSymm = document.getElementById('cand-a-symm');
-          const elDef = document.getElementById('cand-a-deform');
-          if (elVq) elVq.textContent = c.visual_quality.toFixed(1);
-          if (elSymm) elSymm.textContent = c.symmetry_score.toFixed(1);
-          if (elDef) elDef.textContent = `${c.deformation_penalty.toFixed(1)}%`;
-        } else if (c.id === 'candidate_b') {
-          const elVq = document.getElementById('cand-b-vq');
-          const elSymm = document.getElementById('cand-b-symm');
-          const elDef = document.getElementById('cand-b-deform');
-          if (elVq) elVq.textContent = c.visual_quality.toFixed(1);
-          if (elSymm) elSymm.textContent = c.symmetry_score.toFixed(1);
-          if (elDef) elDef.textContent = `${c.deformation_penalty.toFixed(1)}%`;
-        } else if (c.id === 'candidate_c') {
-          const elVq = document.getElementById('cand-c-vq');
-          const elSymm = document.getElementById('cand-c-symm');
-          const elDef = document.getElementById('cand-c-deform');
-          if (elVq) elVq.textContent = c.visual_quality.toFixed(1);
-          if (elSymm) elSymm.textContent = c.symmetry_score.toFixed(1);
-          if (elDef) elDef.textContent = `${c.deformation_penalty.toFixed(1)}%`;
-        } else if (c.id === 'candidate_d') {
-          const elVq = document.getElementById('cand-d-vq');
-          if (elVq) elVq.textContent = c.visual_quality.toFixed(1);
+        const card = document.createElement('label');
+        card.className = 'strategy-option candidate-option';
+        card.dataset.candidate = c.candidate_id;
+        const radio = document.createElement('input');
+        radio.type = 'radio'; radio.name = 'strategy'; radio.value = c.candidate_id;
+        const body = document.createElement('div'); body.className = 'option-body';
+        const heading = document.createElement('div'); heading.className = 'opt-header';
+        const title = document.createElement('strong'); title.textContent = names[c.candidate_id] || c.strategy;
+        heading.append(title);
+        if (c.candidate_id === data.recommended_id) {
+          const badge = document.createElement('span'); badge.className = 'rec-tag';
+          badge.textContent = 'ĐỀ XUẤT'; heading.append(badge);
         }
+        const stats = document.createElement('div'); stats.className = 'candidate-metrics';
+        [['Chất lượng', c.visual_quality.toFixed(1) + '/100'],
+         ['Đối xứng', c.symmetry_score.toFixed(1) + '/100'],
+         ['Mức thay đổi¹', c.change_ratio_percent.toFixed(1) + '%']].forEach(([label, value]) => {
+          const item = document.createElement('div');
+          const small = document.createElement('span'); small.textContent = label;
+          const strong = document.createElement('strong'); strong.textContent = value;
+          item.append(small, strong); stats.append(item);
+        });
+        const detail = document.createElement('p'); detail.className = 'candidate-validity';
+        const v = c.validation;
+        detail.textContent = c.is_valid
+          ? `${v.closed_loops} vòng kín · Giữ kích thước · Móp méo ${c.deformation_penalty.toFixed(1)}%`
+          : `Cần sửa: ${v.errors.join(' ')}`;
+        if (!c.is_valid) card.classList.add('invalid');
+        body.append(heading, stats, detail); card.append(radio, body);
+        radio.addEventListener('change', () => selectCandidate(c.candidate_id));
+        card.addEventListener('click', () => selectCandidate(c.candidate_id));
+        candidateList.append(card);
       });
+      candidateSummary.textContent = data.recommendation_reason;
+      const note = document.createElement('small'); note.className = 'change-note';
+      note.textContent = '¹ Ước lượng từ dịch chuyển trung điểm và số nét; không phải tỷ lệ nét đã sửa.';
+      candidateList.append(note);
+      if (data.recommended_id) selectCandidate(data.recommended_id);
+      previewOriginal.disabled = false;
     } catch (err) {
-      console.warn('Candidate loading error:', err);
+      if (version !== candidateVersion) return;
+      candidateSummary.textContent = 'Chưa tính được phương án. Bấm bên dưới để thử lại.';
+      const retry = document.createElement('button'); retry.className = 'btn btn-secondary';
+      retry.textContent = 'Tính lại phương án';
+      retry.addEventListener('click', async () => { await loadCandidates(sessionId); setStatus('Đã kết thúc so sánh', false); });
+      candidateList.append(retry);
+      showError(err.message);
     }
   }
 
-  // Candidate selection click handler
-  document.querySelectorAll('.candidate-option').forEach(card => {
-    card.addEventListener('click', () => {
-      document.querySelectorAll('.candidate-option').forEach(c => c.classList.remove('active'));
-      card.classList.add('active');
-      const radio = card.querySelector('input[type="radio"]');
-      if (radio) radio.checked = true;
-      currentCandidateId = card.getAttribute('data-candidate') || 'candidate_a';
+  function selectCandidate(id) {
+    const candidate = candidateMap.get(id);
+    if (!candidate) return;
+    currentCandidateId = id;
+    candidateList.querySelectorAll('.candidate-option').forEach(card => {
+      const selected = card.dataset.candidate === id;
+      card.classList.toggle('active', selected);
+      card.querySelector('input').checked = selected;
     });
+    viewer.setRepairedModel(candidate.geometry);
+    previewLabel.textContent = `Xem trước phương án ${id.slice(-1).toUpperCase()} · nét xanh`;
+    btnApplyRepair.disabled = !candidate.is_valid;
+    document.getElementById('toggle-repaired').classList.remove('hidden');
+    document.getElementById('toggle-repaired').classList.add('active');
+    document.getElementById('toggle-heatmap').classList.remove('active');
+    heatmapLegend.classList.add('hidden');
+    exportCard.classList.add('hidden');
+  }
+
+  previewOriginal.addEventListener('click', () => {
+    viewer.layers.repaired = false;
+    viewer.render();
+    previewLabel.textContent = 'Đang xem bản gốc · chọn phương án để so sánh';
+    document.getElementById('toggle-repaired').classList.remove('active');
+  });
+
+  straightenCheckbox.addEventListener('change', async () => {
+    if (!currentSessionId) return;
+    await loadCandidates(currentSessionId);
+    setStatus('Đã cập nhật phương án', false);
   });
 
   // Apply Repair handler
   btnApplyRepair.addEventListener('click', async () => {
-    if (!currentSessionId) return;
+    if (!currentSessionId || !currentCandidateId || isBusy) return;
 
-    const selectedStrategy = document.querySelector('input[name="strategy"]:checked').value;
+    const selectedStrategy = candidateMap.get(currentCandidateId).strategy.toLowerCase();
     const straightenBoundary = document.getElementById('chk-straighten').checked;
+    const appliedVersion = candidateVersion;
 
     setStatus('Đang thực thi sửa đối xứng & tái tạo topology...', true);
     btnApplyRepair.disabled = true;
@@ -461,6 +555,10 @@ document.addEventListener('DOMContentLoaded', () => {
       if (data.error) throw new Error(data.error);
 
       // Update metrics with repaired values
+      if (appliedVersion !== candidateVersion) {
+        setStatus('Bản vẽ đã thay đổi, cần phân tích lại', false);
+        return;
+      }
       const m = data.metrics;
       metricScore.textContent = m.symmetry_score_after.toFixed(1);
       if (m.visual_quality_after !== undefined && m.visual_quality_after !== null) {
@@ -479,13 +577,15 @@ document.addEventListener('DOMContentLoaded', () => {
         metricDeformation.textContent = m.deformation_after.toFixed(1);
       }
 
-      classificationBadge.className = 'badge badge-success';
-      classificationBadge.textContent = 'CHUẨN HÓA THÀNH CÔNG';
-      vqVerdict.className = 'vq-verdict-badge badge-success';
-      vqVerdict.textContent = 'AUTO_ACCEPT (97.3/100)';
-
-      actionRecommendation.textContent = 'READY_FOR_CNC';
-      actionRecommendation.style.color = 'var(--accent-green)';
+      const accepted = m.verdict === 'AUTO_ACCEPT' && m.is_watertight;
+      classificationBadge.className = accepted ? 'badge badge-success' : 'badge badge-warning';
+      classificationBadge.textContent = accepted ? 'ĐÃ CHUẨN HÓA' : 'CẦN KIỂM TRA';
+      vqVerdict.className = accepted ? 'vq-verdict-badge badge-success' : 'vq-verdict-badge badge-warning';
+      vqVerdict.textContent = accepted ? 'ĐẠT ĐÁNH GIÁ HÌNH HỌC' : (m.verdict || 'REVIEW');
+      actionRecommendation.textContent = accepted ? 'KIỂM TRA CAM TRƯỚC KHI CẮT' : 'KIỂM TRA BẢN VẼ';
+      topoLoops.textContent = m.total_loops;
+      topoEntities.textContent = `${data.repaired_geometry.lines.length} nét / ${data.repaired_geometry.arcs.length} cung`;
+      previewLabel.textContent = 'Đã áp dụng · có thể xuất DXF';
 
       // Show repaired geometry in viewer
       viewer.setRepairedModel(data.repaired_geometry);
@@ -497,6 +597,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
       // Setup download buttons
       exportCard.classList.remove('hidden');
+      btnDownloadDxf.classList.remove('hidden');
+      btnDownloadJson.classList.remove('hidden');
+      btnDownloadManualDxf.classList.add('hidden');
       btnDownloadDxf.href = data.download_url;
       btnDownloadDxf.setAttribute('download', data.filename || 'repaired_pattern.dxf');
       if (btnDownloadJson) {
@@ -505,24 +608,38 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       setStatus('Sửa đối xứng & Regularization thành công!', false);
-      btnApplyRepair.disabled = false;
+      btnApplyRepair.disabled = !candidateMap.get(currentCandidateId)?.is_valid;
     } catch (err) {
-      alert('Lỗi khi sửa hoa văn: ' + err.message);
+      showError('Lỗi khi sửa hoa văn: ' + err.message);
       setStatus('Lỗi sửa hoa văn', false);
-      btnApplyRepair.disabled = false;
+      btnApplyRepair.disabled = !candidateMap.get(currentCandidateId)?.is_valid;
     }
   });
 
   function setStatus(text, isLoading) {
     statusLabel.textContent = text;
-    const dot = document.querySelector('.status-dot');
-    if (isLoading) {
-      dot.style.backgroundColor = 'var(--accent-orange)';
-      dot.style.boxShadow = '0 0 8px var(--accent-orange)';
-    } else {
-      dot.style.backgroundColor = 'var(--accent-green)';
-      dot.style.boxShadow = '0 0 8px var(--accent-green)';
+    isBusy = isLoading;
+    btnLoadSample.disabled = isLoading;
+    fileInput.disabled = isLoading;
+    straightenCheckbox.disabled = isLoading;
+    dropzone.classList.toggle('busy', isLoading);
+    candidateList.inert = isLoading;
+    document.querySelector('.status-indicator').classList.toggle('loading', isLoading);
+    const elapsed = document.getElementById('operation-time');
+    if (isLoading && !operationTimer) {
+      document.getElementById('app-error').classList.add('hidden');
+      operationStarted = performance.now();
+      operationTimer = setInterval(() => { elapsed.textContent = `Đang xử lý · ${((performance.now() - operationStarted) / 1000).toFixed(0)}s`; }, 500);
+    } else if (!isLoading && operationTimer) {
+      clearInterval(operationTimer); operationTimer = null;
+      elapsed.textContent = `Thời gian xử lý · ${((performance.now() - operationStarted) / 1000).toFixed(1)}s`;
     }
   }
+
+  dropzone.addEventListener('keydown', (event) => {
+    if (!isBusy && (event.key === 'Enter' || event.key === ' ')) {
+      event.preventDefault(); fileInput.click();
+    }
+  });
 
 });

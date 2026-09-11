@@ -4,11 +4,12 @@ Tests adding lines, deleting lines, re-analyzing, and exporting manual DXF files
 """
 
 import os
+from pathlib import Path
 import pytest
 from src.web.app import app, SESSIONS
 from src.io.dxf_io import DXFImporter
 
-NO2_DXF_PATH = r"C:\Users\Lax\Downloads\No2.dxf"
+NO2_DXF_PATH = str(Path(__file__).resolve().parents[1] / "samples" / "No2.dxf")
 
 
 @pytest.fixture
@@ -18,7 +19,7 @@ def client():
         yield client
 
 
-@pytest.mark.skipif(not os.path.exists(NO2_DXF_PATH), reason="No2.dxf not present in Downloads")
+
 def test_manual_edit_flow(client):
     # 1. Load sample No2.dxf
     load_resp = client.post("/api/load-sample", json={"sample_id": "sample_no2"})

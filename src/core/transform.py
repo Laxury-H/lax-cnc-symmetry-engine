@@ -119,6 +119,17 @@ class SymmetryAxis2D:
             metadata=dict(circle.metadata)
         )
 
+    def reflect_coordinates(self, coords: np.ndarray) -> np.ndarray:
+        """Reflect an (N, 2) array with the same projection as reflect_point."""
+        coords = np.asarray(coords, dtype=np.float64).reshape(-1, 2)
+        dx = coords[:, 0] - self.origin.x
+        dy = coords[:, 1] - self.origin.y
+        projection = dx * self.direction.dx + dy * self.direction.dy
+        return np.column_stack((
+            2 * (self.origin.x + projection * self.direction.dx) - coords[:, 0],
+            2 * (self.origin.y + projection * self.direction.dy) - coords[:, 1],
+        ))
+
     @classmethod
     def vertical(cls, x_offset: float) -> SymmetryAxis2D:
         """Create a vertical symmetry axis x = x_offset."""

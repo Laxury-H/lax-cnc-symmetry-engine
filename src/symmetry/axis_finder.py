@@ -215,13 +215,8 @@ class SymmetryAxisFinder:
             orig = init_origin + (normal * d_norm)
             ax = SymmetryAxis2D.from_angle_and_point(orig, ang)
             # Compute trimmed mean deviation
-            devs = []
-            for p in sub_evaluator.sample_points:
-                rp = ax.reflect_point(p)
-                _, dist, _ = sub_evaluator.spatial_index.nearest(rp)
-                devs.append(dist)
             # Use Huber or truncated RMS to be robust against asymmetric outliers
-            arr = np.array(devs, dtype=np.float64)
+            arr = sub_evaluator.deviations(ax)
             # Truncate at 90th percentile to ignore extreme outliers
             threshold = np.percentile(arr, 90)
             inliers = arr[arr <= max(2.0, threshold)]

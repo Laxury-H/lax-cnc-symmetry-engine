@@ -7,7 +7,8 @@ from __future__ import annotations
 import os
 import uuid
 import json
-from typing import Dict, Any
+from time import perf_counter
+from typing import Dict, Any, Optional
 from flask import Flask, request, jsonify, send_file, send_from_directory
 from flask_cors import CORS
 from werkzeug.exceptions import HTTPException
@@ -31,6 +32,18 @@ CORS(app)
 
 # In-memory storage for active sessions: {session_id: {"model": CADModel2D, "analysis": ..., "repaired": ...}}
 SESSIONS: Dict[str, Dict[str, Any]] = {}
+
+
+def session_candidates(session, straighten_boundary=True):
+    """Keep only the latest option set; manual edits invalidate this cache."""
+    cached = session.get("candidate_cache")
+    if cached is not None and cached[0] == straighten_boundary:
+        return cached[1], True
+    from src.repair.candidates import CandidateRepairGenerator
+    candidates = CandidateRepairGenerator(straighten_boundary=straighten_boundary).generate_all(
+        session["model"], features=session.get("features"), intent=session.get("intent"))
+    session["candidate_cache"] = (straighten_boundary, candidates)
+    return candidates, False
 
 
 @app.errorhandler(HTTPException)
@@ -143,6 +156,7 @@ def upload_file():
 
 
 def process_and_store_model(file_path: str, original_filename: str, session_id: Optional[str] = None):
+    started = perf_counter()
     if not session_id:
         session_id = str(uuid.uuid4())[:8]
 
@@ -206,7 +220,8 @@ def process_and_store_model(file_path: str, original_filename: str, session_id: 
             "heatmap": heatmap_points,
             "visual_quality": vq_json,
             "anchors": anchors_json,
-            "intent": intent_json
+            "intent": intent_json,
+            "elapsed_seconds": round(perf_counter() - started, 3)
         })
     except Exception as e:
         import traceback
@@ -220,16 +235,10 @@ def get_candidates(session_id: str):
         return jsonify({"error": "Session not found"}), 404
 
     session = SESSIONS[session_id]
-    model = session["model"]
 
     try:
-        from src.repair.candidates import CandidateRepairGenerator
-        generator = CandidateRepairGenerator()
-        candidates = generator.generate_all(
-            model,
-            features=session.get("features"),
-            intent=session.get("intent")
-        )
+        started = perf_counter()
+        candidates, cached = session_candidates(session, request.args.get("straighten_boundary", "true") != "false")
 
         cands_data = []
         for c in candidates:
@@ -237,7 +246,16 @@ def get_candidates(session_id: str):
             c_dict["geometry"] = serialize_model_to_json(c.repaired_model)
             cands_data.append(c_dict)
 
-        return jsonify({"candidates": cands_data})
+        valid = [c for c in candidates if c.validation.is_valid and
+                 c.quality_score.composite_quality >= session["visual_quality"].composite_quality - 0.01]
+        best = valid[0] if valid else None
+        reason = (f"Đề xuất {best.candidate_id[-1].upper()}: chất lượng {best.quality_score.composite_quality:.1f}/100, "
+                  f"mức thay đổi ước lượng {best.change_ratio_percent:.1f}%; đã qua kiểm tra hình học. "
+                  "Xem trước để đối chiếu ý đồ thiết kế." if best else
+                  "Chưa có phương án hợp lệ cải thiện chất lượng. Hãy kiểm tra hoặc sửa bản gốc.")
+        return jsonify({"candidates": cands_data, "recommended_id": best.candidate_id if best else None,
+                        "recommendation_reason": reason, "cached": cached,
+                        "elapsed_seconds": round(perf_counter() - started, 3)})
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -299,7 +317,7 @@ def update_model():
         features = fe.extract(updated_model)
 
         vq_scorer = VisualQualityScorer()
-        vq_report = vq_scorer.score(updated_model)
+        vq_report = vq_scorer.score(updated_model, symm_result=result)
 
         anchor_det = AnchorDetector()
         anchors = anchor_det.detect_anchors(updated_model)
@@ -322,6 +340,8 @@ def update_model():
         session["anchors"] = anchors
         session["intent"] = intent
         session["visual_quality"] = vq_report
+        for key in ("candidate_cache", "repaired_result", "repaired_dxf_path"):
+            session.pop(key, None)
 
         return jsonify({
             "status": "success",
@@ -385,12 +405,13 @@ def repair_model():
             # User specifically selected a candidate hypothesis
             from src.repair.candidates import CandidateRepairGenerator
             generator = CandidateRepairGenerator()
-            candidates = generator.generate_all(
-                orig_model,
-                features=session.get("features"),
-                intent=session.get("intent")
-            )
-            matched = next((c for c in candidates if c.candidate_id == candidate_id), candidates[0])
+            candidates, _ = session_candidates(session, straighten_boundary)
+            matched = next((c for c in candidates if c.candidate_id == candidate_id), None)
+            if matched is None:
+                return jsonify({"error": "Không tìm thấy phương án đã chọn."}), 400
+            if not matched.validation.is_valid:
+                return jsonify({"error": "Phương án không đạt kiểm tra hình học.",
+                                "validation": matched.validation.to_dict()}), 422
 
             # Use matched candidate
             pre_symm = session["analysis"]
@@ -410,7 +431,7 @@ def repair_model():
                 rms_deviation_before=pre_symm.primary_profile.rms_deviation,
                 rms_deviation_after=post_symm.primary_profile.rms_deviation,
                 is_watertight=matched.validation.is_watertight,
-                total_loops_repaired=len(matched.repaired_model.lines),
+                total_loops_repaired=matched.validation.total_closed_loops,
                 operations_log=[
                     f"Applied Candidate {matched.candidate_id.upper()}: {matched.strategy_name}",
                     f"Visual Quality: {post_vq.composite_quality:.2f} / 100",
@@ -441,7 +462,7 @@ def repair_model():
 
         # Export repaired DXF
         base_name = os.path.splitext(session["filename"])[0]
-        out_filename = f"{session_id}_{base_name}_repaired.dxf"
+        out_filename = f"{session_id}_repaired.dxf"
         out_filepath = os.path.join(OUTPUT_DIR, out_filename)
         exporter = DXFExporter(dxf_version="R2013")
         exporter.export(repair_res.repaired_model, out_filepath)

@@ -279,8 +279,8 @@ class PatternRepairEngine:
 
         from src.quality.scorer import VisualQualityScorer
         vq_scorer = VisualQualityScorer()
-        pre_vq = vq_scorer.score(model)
-        post_vq = vq_scorer.score(repaired_model)
+        pre_vq = vq_scorer.score(model, symm_result=pre_result)
+        post_vq = vq_scorer.score(repaired_model, symm_result=post_result)
 
         ops.append(f"Post-repair symmetry score: {post_result.primary_profile.symmetry_score:.2f} / 100")
         ops.append(f"Post-repair max deviation: {post_result.primary_profile.max_deviation:.4f} mm")
