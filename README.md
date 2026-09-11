@@ -63,6 +63,15 @@ Mở trình duyệt và truy cập: `http://localhost:5000`
 
 ## ☁️ Hướng Dẫn Triển Khai Lên Cloud (Render.com)
 
+`gunicorn.conf.py` đặt một worker (session đang lưu trong RAM) và timeout
+300 giây cho các yêu cầu phân tích DXF. Gunicorn tự đọc file này khi chạy
+từ thư mục gốc dự án, kể cả với Start Command hiện tại bên dưới.
+Sau khi cập nhật mã nguồn, cần deploy lại trên Render. Nếu có cấu hình
+`--timeout`, `--workers` hoặc `GUNICORN_CMD_ARGS` riêng, hãy kiểm tra các giá trị
+ghi đè. Nếu upload vẫn lỗi HTTP 502/503/504, xem log Render tại thời điểm lỗi:
+`WORKER TIMEOUT` cho biết quá thời gian; worker bị `SIGKILL` cần kiểm tra bộ nhớ.
+Session sẽ mất khi dịch vụ khởi động lại; cần nạp lại file trong trường hợp đó.
+
 Dự án đã cấu hình sẵn các file `render.yaml` và `Procfile` chuẩn production:
 
 1. Đăng nhập vào [Render.com](https://dashboard.render.com/) bằng tài khoản GitHub.

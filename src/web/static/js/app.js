@@ -2,6 +2,26 @@
  * Main Web Application State & API Controller.
  */
 
+async function readApiResponse(response) {
+  const body = await response.text();
+  let data;
+  try {
+    data = JSON.parse(body);
+  } catch {
+    const message = [502, 503, 504].includes(response.status)
+      ? 'Máy chủ đang bận hoặc quá thời gian xử lý. Vui lòng thử lại sau.'
+      : 'Máy chủ trả về phản hồi không hợp lệ. Vui lòng thử lại sau.';
+    throw new Error(`${message} (HTTP ${response.status})`);
+  }
+  if (!response.ok || data?.error) {
+    throw new Error(data?.error || `Yêu cầu thất bại (HTTP ${response.status}).`);
+  }
+  if (!data || typeof data !== 'object') {
+    throw new Error('Máy chủ trả về dữ liệu không hợp lệ.');
+  }
+  return data;
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   const viewer = new CADViewer('cad-canvas');
 
@@ -165,7 +185,7 @@ document.addEventListener('DOMContentLoaded', () => {
           })
         });
 
-        const data = await resp.json();
+        const data = await readApiResponse(resp);
         if (data.error) throw new Error(data.error);
 
         // Update metrics on screen
@@ -262,7 +282,7 @@ document.addEventListener('DOMContentLoaded', () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sample_id: 'sample_no2' })
       });
-      const data = await resp.json();
+      const data = await readApiResponse(resp);
       if (data.error) throw new Error(data.error);
       handleAnalysisResult(data);
       setStatus('Đã phân tích xong mẫu thử', false);
@@ -288,7 +308,7 @@ document.addEventListener('DOMContentLoaded', () => {
         method: 'POST',
         body: formData
       });
-      const data = await resp.json();
+      const data = await readApiResponse(resp);
       if (data.error) throw new Error(data.error);
       handleAnalysisResult(data);
       setStatus(`Đã phân tích ${file.name}`, false);
@@ -369,7 +389,7 @@ document.addEventListener('DOMContentLoaded', () => {
   async function loadCandidates(sessionId) {
     try {
       const resp = await fetch(`/api/candidates/${sessionId}`);
-      const data = await resp.json();
+      const data = await readApiResponse(resp);
       if (!data.candidates) return;
 
       data.candidates.forEach(c => {
@@ -437,7 +457,7 @@ document.addEventListener('DOMContentLoaded', () => {
         })
       });
 
-      const data = await resp.json();
+      const data = await readApiResponse(resp);
       if (data.error) throw new Error(data.error);
 
       // Update metrics with repaired values

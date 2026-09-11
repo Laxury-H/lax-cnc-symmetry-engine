@@ -10,6 +10,7 @@ import json
 from typing import Dict, Any
 from flask import Flask, request, jsonify, send_file, send_from_directory
 from flask_cors import CORS
+from werkzeug.exceptions import HTTPException
 
 from src.io.dxf_io import DXFImporter, DXFExporter, CADModel2D
 from src.symmetry.scorer import SymmetryAnalyzer
@@ -30,6 +31,13 @@ CORS(app)
 
 # In-memory storage for active sessions: {session_id: {"model": CADModel2D, "analysis": ..., "repaired": ...}}
 SESSIONS: Dict[str, Dict[str, Any]] = {}
+
+
+@app.errorhandler(HTTPException)
+def handle_http_error(error):
+    if request.path.startswith("/api/"):
+        return jsonify({"error": error.description}), error.code
+    return error
 
 
 def serialize_model_to_json(model: CADModel2D) -> Dict[str, Any]:
@@ -128,7 +136,7 @@ def upload_file():
     if ext != ".dxf":
         return jsonify({"error": "Currently only .DXF files are supported directly in web mode"}), 400
 
-    saved_path = os.path.join(UPLOAD_DIR, f"{session_id}_{file.filename}")
+    saved_path = os.path.join(UPLOAD_DIR, f"{session_id}.dxf")
     file.save(saved_path)
 
     return process_and_store_model(saved_path, original_filename=file.filename, session_id=session_id)
@@ -166,7 +174,7 @@ def process_and_store_model(file_path: str, original_filename: str, session_id: 
         features = fe.extract(model)
 
         vq_scorer = VisualQualityScorer()
-        vq_report = vq_scorer.score(model)
+        vq_report = vq_scorer.score(model, symm_result=result)
 
         anchor_det = AnchorDetector()
         anchors = anchor_det.detect_anchors(model)
