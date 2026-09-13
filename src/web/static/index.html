@@ -65,18 +65,20 @@
           <div class="card-header">
             <h3>Nhập File Pattern CNC</h3>
           </div>
-          <div id="dropzone" class="dropzone" role="button" tabindex="0" aria-label="Chọn file DXF">
-            <input type="file" id="file-input" accept=".dxf" hidden>
+          <div id="dropzone" class="dropzone" role="button" tabindex="0" aria-label="Chọn file CAD hoặc CNC">
+            <input type="file" id="file-input" accept=".dxf,.dwg,.svg,.plt,.hpgl,.hpg,.nc,.cnc,.gcode,.tap,.ngc" hidden>
             <div class="dropzone-content">
               <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
                 <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
                 <polyline points="17 8 12 3 7 8"/>
                 <line x1="12" y1="3" x2="12" y2="15"/>
               </svg>
-              <p class="drop-text">Kéo thả file <strong>.DXF</strong> vào đây</p>
+              <p class="drop-text">Kéo thả file <strong>DWG · DXF · SVG · CNC</strong></p>
               <span class="browse-link">hoặc nhấp để chọn file</span>
             </div>
           </div>
+          <p id="format-status" class="import-note" role="status">DXF, SVG, HPGL/PLT, G-code 2D · Tối đa 50 MB. DWG cần bộ chuyển đổi trên máy chủ.</p>
+          <div id="import-notes" class="import-note hidden" role="status"></div>
           <div id="file-info-bar" class="file-info-bar hidden">
             <span id="active-filename" class="active-filename">-</span>
             <span id="panel-dimensions" class="panel-dimensions">-</span>
@@ -405,7 +407,7 @@
                 <polyline points="2 12 12 17 22 12"/>
               </svg>
               <h2>Không Gian Bản Vẽ CAD</h2>
-              <p>Hãy kéo thả file <strong>.DXF</strong> vào cột bên trái hoặc bấm nút <strong>"Mẫu thử"</strong> để trải nghiệm phân tích và sửa đối xứng.</p>
+              <p>Kéo thả bản vẽ <strong>DWG, DXF, SVG, HPGL hoặc G-code 2D</strong> vào cột bên trái hoặc bấm <strong>"Mẫu thử"</strong> để phân tích và sửa đối xứng.</p>
             </div>
           </div>
 

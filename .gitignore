@@ -20,6 +20,7 @@ src/web/uploads/*
 src/web/outputs/*
 !src/web/outputs/.gitkeep
 scratch/
+.tools/
 
 # OS metadata
 .DS_Store

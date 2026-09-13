@@ -77,20 +77,20 @@ class DXFImporter:
             raise FileNotFoundError(f"DXF file not found: {filepath}")
 
         doc = ezdxf.readfile(filepath)
+        return self.load_document(doc, filepath)
+
+    def load_document(self, doc: Drawing, filepath: str = "") -> CADModel2D:
+        """Use the same geometry extraction for native DXF and converted DWG."""
         msp = doc.modelspace()
 
         # Determine unit scale factor
         scale_factor = 1.0
         header_unit = "millimeters"
-        try:
-            insunits = doc.header.get("$INSUNITS", 4)
-            unit_name, factor = self.INSUNITS_MAP.get(insunits, ("millimeters", 1.0))
-            header_unit = unit_name
-            # For CNC patterns, unless explicitly in inches or meters, coordinates are usually mm
-            if insunits in (1, 2, 5, 6):
-                scale_factor = factor
-        except Exception:
-            pass
+        from ezdxf import units
+        insunits = doc.header.get("$INSUNITS", 0)
+        header_unit = units.unit_name(insunits)
+        if insunits:
+            scale_factor = units.conversion_factor(insunits, 4)
 
         model = CADModel2D(
             source_file=filepath,
@@ -98,10 +98,39 @@ class DXFImporter:
             metadata={"header_unit": header_unit, "scale_factor": scale_factor, "dxf_version": doc.dxfversion}
         )
 
-        for entity in msp:
+        skipped = {}
+        projected_3d = False
+        def expand(entities, depth=0, inherited_layer="0"):
+            if depth > 32:
+                raise ValueError("Bản vẽ có quá nhiều cấp block lồng nhau.")
+            for item in entities:
+                if item.dxftype() == "INSERT":
+                    def on_skip(entity, reason):
+                        key = entity.dxftype()
+                        skipped[key] = skipped.get(key, 0) + 1
+                    inserts = item.multi_insert() if item.mcount > 1 else [item]
+                    for insert in inserts:
+                        yield from expand(insert.virtual_entities(skipped_entity_callback=on_skip), depth + 1,
+                                          insert.dxf.layer if insert.dxf.layer != "0" else inherited_layer)
+                else:
+                    yield item, item.dxf.layer if item.dxf.layer != "0" else inherited_layer
+
+        for entity, layer in expand(msp):
             dxftype = entity.dxftype()
-            layer = entity.dxf.layer
             model.layers.add(layer)
+            if dxftype in {"ARC", "CIRCLE", "LWPOLYLINE", "POLYLINE"}:
+                extrusion = entity.dxf.get("extrusion", (0, 0, 1))
+                if tuple(extrusion) != (0, 0, 1):
+                    key = dxftype + " (mặt phẳng OCS khác XY)"
+                    skipped[key] = skipped.get(key, 0) + 1
+                    continue
+            if dxftype == "POLYLINE" and (entity.is_polygon_mesh or entity.is_poly_face_mesh):
+                skipped["MESH"] = skipped.get("MESH", 0) + 1
+                continue
+            for attribute in ("start", "end", "center", "elevation"):
+                value = entity.dxf.get(attribute) if entity.dxf.is_supported(attribute) else None
+                if value is not None and (getattr(value, "z", 0) or (attribute == "elevation" and isinstance(value, (float, int)) and value)):
+                    projected_3d = True
 
             if dxftype == "LINE":
                 p1 = Point2D(entity.dxf.start.x * scale_factor, entity.dxf.start.y * scale_factor)
@@ -154,6 +183,21 @@ class DXFImporter:
                 spline_lines = self._approximate_spline(entity, scale_factor, layer)
                 model.lines.extend(spline_lines)
 
+            elif dxftype == "ELLIPSE":
+                pts = [Point2D(p.x * scale_factor, p.y * scale_factor)
+                       for p in entity.flattening(0.02 / scale_factor)]
+                model.lines.extend(LineSegment2D(a, b, layer=layer) for a, b in zip(pts, pts[1:]))
+            else:
+                skipped[dxftype] = skipped.get(dxftype, 0) + 1
+
+        model.metadata["skipped_entities"] = skipped
+        model.metadata["warnings"] = []
+        if skipped:
+            model.metadata["warnings"].append("Đối tượng chưa nhập: " + ", ".join(f"{k}: {v}" for k, v in sorted(skipped.items())))
+        if insunits == 0:
+            model.metadata["warnings"].append("Bản vẽ không khai báo đơn vị; đang hiểu 1 đơn vị = 1 mm.")
+        if projected_3d:
+            model.metadata["warnings"].append("Bản vẽ có cao độ Z; đang phân tích hình chiếu XY, không phải mô hình 3D.")
         return model
 
     def _explode_lwpolyline(self, entity: DXFGraphic, scale: float, layer: str) -> Tuple[List[LineSegment2D], List[Arc2D]]:

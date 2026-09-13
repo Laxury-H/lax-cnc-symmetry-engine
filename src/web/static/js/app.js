@@ -28,6 +28,14 @@ document.addEventListener('DOMContentLoaded', () => {
   // DOM Elements
   const dropzone = document.getElementById('dropzone');
   const fileInput = document.getElementById('file-input');
+  const formatStatus = document.getElementById('format-status');
+  fetch('/api/formats').then(readApiResponse).then(data => {
+    fileInput.accept = data.formats.map(item => item.extension).join(',');
+    const dwg = data.formats.find(item => item.extension === '.dwg');
+    formatStatus.textContent = `DXF, SVG, HPGL/PLT, G-code 2D · Tối đa 50 MB. ${dwg?.available ? 'DWG: bộ chuyển đổi đã được tìm thấy.' : 'DWG: cần cài ODA File Converter trên máy chủ.'}`;
+  }).catch(() => {
+    formatStatus.textContent = 'Chưa kiểm tra được trạng thái DWG. DXF, SVG, HPGL/PLT, G-code 2D · Tối đa 50 MB.';
+  });
   const btnLoadSample = document.getElementById('btn-load-sample');
   const btnApplyRepair = document.getElementById('btn-apply-repair');
   const btnDownloadDxf = document.getElementById('btn-download-dxf');
@@ -336,8 +344,13 @@ document.addEventListener('DOMContentLoaded', () => {
   // Upload handler
   async function uploadFile(file) {
     if (isBusy) return;
-    if (!file.name.toLowerCase().endsWith('.dxf')) {
-      showError('Hiện tại hỗ trợ file định dạng .DXF');
+    const extension = '.' + file.name.split('.').pop().toLowerCase();
+    if (!fileInput.accept.split(',').includes(extension)) {
+      showError('Định dạng chưa hỗ trợ. Chọn DWG, DXF, SVG, HPGL/PLT hoặc G-code 2D.');
+      return;
+    }
+    if (file.size > 50 * 1024 * 1024) {
+      showError('File vượt giới hạn 50 MB.');
       return;
     }
 
@@ -364,6 +377,10 @@ document.addEventListener('DOMContentLoaded', () => {
   // Handle analysis response
   async function handleAnalysisResult(data) {
     currentSessionId = data.session_id;
+    const notes = document.getElementById('import-notes');
+    const warnings = data.import_info?.warnings || [];
+    notes.textContent = warnings.join(' ');
+    notes.classList.toggle('hidden', warnings.length === 0);
 
     // Hide empty overlay, show info bar & heatmap legend
     canvasEmptyOverlay.classList.add('hidden');

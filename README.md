@@ -5,7 +5,53 @@
 [![Flask](https://img.shields.io/badge/Framework-Flask%203.1-black?logo=flask)](https://flask.palletsprojects.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-> **Lax's CNC SYMMETRY ENGINE** là giải pháp phần mềm chuyên sâu ứng dụng Computational Geometry (Hình học tính toán), Topology Graph và Design Intent & Geometric Regularization để tự động phát hiện, chẩn đoán sai lệch và nắn chỉnh hoàn hảo các mẫu vách hoa văn CNC thiết kế từ SketchUp (.SKP) và AutoCAD (.DXF).
+> **Lax's CNC SYMMETRY ENGINE** phân tích và chỉnh đối xứng hoa văn CNC 2D từ DXF, DWG (qua ODA), SVG, HPGL/PLT và G-code XY. File SketchUp cần xuất DXF trước khi nhập.
+
+### Định dạng nhập
+
+| File | Phạm vi hiện có |
+| --- | --- |
+| `.dxf` | Model space: line, arc, circle, polyline/bulge, spline, ellipse, block lồng nhau; chuẩn hóa đơn vị mm |
+| `.dwg` | Chuyển bằng ODA File Converter rồi dùng cùng bộ đọc DXF; cần runtime trên máy chạy backend |
+| `.svg` | Path, line, rect, circle, ellipse, polygon; transform/viewBox và đơn vị 96 dpi; cong xấp xỉ theo bước tối đa 0,5 mm |
+| `.plt`, `.hpgl`, `.hpg` | HPGL IN/DF/SP/PA/PR/PU/PD, nét hạ bút, tọa độ tuyệt đối/tương đối, 0,025 mm/đơn vị |
+| `.nc`, `.cnc`, `.gcode`, `.tap`, `.ngc` | Hình chiếu XY G1/G2/G3, cung I/J hoặc R, G20/G21, G90/G91, G90.1/G91.1; bỏ rapid G0 |
+
+Giới hạn 50 MB/file, 100.000 đối tượng sau nhập. G-code mặc định mm,
+tọa độ tuyệt đối, tâm cung tương đối, vị trí ban đầu (0,0,0); không phải trình
+mô phỏng máy và không xác định vật liệu bị cắt theo Z/spindle. Macro, chu trình,
+bù dao, G53/G92, mặt phẳng khác XY và cung xoắn bị từ chối. SVG text/clone cần
+chuyển thành path; mask/clip/CSS/ảnh raster chưa hỗ trợ. HPGL có lệnh hình học
+khác danh sách trên phải xuất DXF. Không đọc trực tiếp SKP, STEP/IGES, STL,
+PDF, AI, CDR hoặc mọi phương ngữ điều khiển CNC. Kết quả sửa xuất **DXF**.
+Các đối tượng CAD chưa đọc được được liệt kê trên giao diện; các curve spline/
+ellipse được xấp xỉ. Bản vẽ có OCS khác XY được bỏ qua kèm thông báo.
+
+### Bật DWG
+
+Tải runtime từ [ODA File Converter](https://www.opendesign.com/guestfiles/oda_file_converter).
+Ứng dụng tự tìm trên PATH, cấu hình ezdxf hoặc `C:\Program Files\ODA\*`.
+Có thể chỉ định rõ trước khi chạy backend:
+
+```powershell
+$env:ODA_FILE_CONVERTER = 'C:\Program Files\ODA\ODAFileConverter\ODAFileConverter.exe'
+python server.py
+```
+
+Máy phát triển hiện dùng bản portable tại `.tools/oda/runtime/ODAFileConverter.exe`,
+được tự phát hiện trên Windows. Runtime không đưa vào Git. Nếu chuyển repo sang
+máy khác, cần cài ODA lại. Trên Linux đặt `ODA_FILE_CONVERTER` tới executable
+(hoặc AppImage có quyền chạy); app dùng Qt offscreen và timeout chuyển đổi 120 giây.
+Render Python mặc định **chưa có ODA**. `Dockerfile` và `render.yaml` dùng Docker
+để cài ODA Linux cùng thư viện hệ thống và màn hình ảo Xvfb (ODA bản này chỉ có
+Qt xcb). Chỉ `pip install` không bật được DWG.
+Docker build chạy `scripts/check_dwg_runtime.py` và dừng nếu chuyển DWG thật thất bại.
+
+`GET /api/formats` cho biết định dạng và bộ chuyển đổi đã được tìm thấy hay chưa.
+Khả năng chạy thực tế phụ thuộc runtime; nếu chuyển đổi lỗi, giao diện hiển thị lỗi.
+Web và `python cli.py analyze drawing.dwg` sử dụng cùng bộ nhập.
+Kiểm thử ODA thật tạo DWG từ một bản DXF rồi nhập lại để đối chiếu kích thước;
+test này tự bỏ qua ở môi trường không cài ODA.
 
 ---
 
@@ -76,17 +122,33 @@ ghi đè. Nếu upload vẫn lỗi HTTP 502/503/504, xem log Render tại thời
 `WORKER TIMEOUT` cho biết quá thời gian; worker bị `SIGKILL` cần kiểm tra bộ nhớ.
 Session sẽ mất khi dịch vụ khởi động lại; cần nạp lại file trong trường hợp đó.
 
-Dự án đã cấu hình sẵn các file `render.yaml` và `Procfile` chuẩn production:
+Dự án đã cấu hình `render.yaml` và `Dockerfile` cho DWG trên Linux:
 
 1. Đăng nhập vào [Render.com](https://dashboard.render.com/) bằng tài khoản GitHub.
 2. Bấm nút **New +** ở góc trên bên phải -> Chọn **Web Service**.
 3. Chọn repository **`lax-cnc-symmetry-engine`** từ danh sách GitHub của bạn.
-4. Render sẽ tự động nhận diện cấu hình:
-   - **Environment**: `Python 3`
-   - **Build Command**: `pip install -r requirements.txt`
-   - **Start Command**: `gunicorn src.web.app:app --bind 0.0.0.0:$PORT`
+4. Chọn cấu hình:
+   - **Language / Runtime**: `Docker`
+   - **Dockerfile Path**: `./Dockerfile`
+   - **Docker Command**: để trống (dùng CMD trong Dockerfile)
+   - **Health Check Path**: `/api/formats`
    - **Plan**: `Free`
-5. Bấm **Deploy Web Service**. Sau 2-3 phút, bạn sẽ nhận được đường dẫn trực tiếp (ví dụ: `https://lax-cnc-symmetry-engine.onrender.com`).
+5. Bấm **Deploy Web Service**. Lần build đầu tải Python, thư viện và ODA nên có thể mất vài phút.
+
+Service Python đã tạo trước đây không tự chuyển sang Docker chỉ nhờ push Git.
+Cần tạo service Docker từ repo (hoặc cập nhật cấu hình runtime qua công cụ quản lý
+Render nếu tài khoản hỗ trợ). Service Python vẫn đọc DXF/SVG/HPGL/G-code sau deploy,
+nhưng DWG cần service Docker. File ODA của Windows trong `.tools` không được push.
+
+Kiểm tra Docker tại local:
+
+```bash
+docker build -t cnc-symmetry .
+docker run --rm -p 10000:10000 cnc-symmetry
+```
+
+Sau deploy, kiểm tra `/api/formats` có `.dwg` với `available: true` và nhập một
+DWG thật. Push thành công không đồng nghĩa Render đã build/deploy thành công.
 
 ---
 

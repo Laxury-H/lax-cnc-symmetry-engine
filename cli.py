@@ -21,7 +21,7 @@ import os
 import sys
 import numpy as np
 
-from src.io.dxf_io import DXFImporter
+from src.io.cad_io import CADImporter, CADImportError
 from src.topology.graph import TopologyGraph
 from src.topology.cycle_finder import CycleFinder
 from src.symmetry.scorer import SymmetryAnalyzer
@@ -39,8 +39,14 @@ def analyze_file(file_path: str, save_plot: bool = False, plot_path: str = "", j
     print(f"File: {os.path.abspath(file_path)}")
 
     # 1. Load CAD model
-    importer = DXFImporter(target_unit="mm")
-    model = importer.load(file_path)
+    importer = CADImporter(target_unit="mm")
+    try:
+        model = importer.load(file_path)
+    except CADImportError as exc:
+        print(f"[ERROR] {exc}")
+        sys.exit(1)
+    for warning in model.metadata.get("warnings", []):
+        print(f"[NOTE] {warning}")
     bbox = model.bbox
 
     print(f"Thuc the CAD:     {len(model.lines)} lines, {len(model.arcs)} arcs, {len(model.circles)} circles")
@@ -173,7 +179,7 @@ def main():
 
     # analyze command
     analyze_parser = subparsers.add_parser("analyze", help="Phan tich doi xung cua file DXF")
-    analyze_parser.add_argument("file", help="Duong dan toi file .dxf")
+    analyze_parser.add_argument("file", help="DXF, DWG (ODA), SVG, HPGL/PLT, G-code 2D")
     analyze_parser.add_argument("--plot", action="store_true", help="Xuat anh heatmap do lech")
     analyze_parser.add_argument("--output-image", default="", help="Duong dan file anh xuat ra")
     analyze_parser.add_argument("--json", default="", help="Xuat bao cao ra file JSON")

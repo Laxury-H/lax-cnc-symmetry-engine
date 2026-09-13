@@ -82,3 +82,10 @@ button:focus-visible, a:focus-visible, .dropzone:focus-visible { outline: 2px so
   .candidate-metrics strong { font-size: 12px; }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+.import-note {
+  margin: 10px 14px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-secondary, #a6b3c6);
+  overflow-wrap: anywhere;
+}

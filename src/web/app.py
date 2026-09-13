@@ -14,6 +14,7 @@ from flask_cors import CORS
 from werkzeug.exceptions import HTTPException
 
 from src.io.dxf_io import DXFImporter, DXFExporter, CADModel2D
+from src.io.cad_io import CADImporter, CADImportError, FORMATS, format_capabilities
 from src.symmetry.scorer import SymmetryAnalyzer
 from src.repair.engine import PatternRepairEngine
 from src.core.transform import SymmetryAxis2D
@@ -28,6 +29,7 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 app = Flask(__name__, static_folder=STATIC_DIR)
+app.config["MAX_CONTENT_LENGTH"] = 51 * 1024 * 1024
 CORS(app)
 
 # In-memory storage for active sessions: {session_id: {"model": CADModel2D, "analysis": ..., "repaired": ...}}
@@ -75,6 +77,10 @@ def serialize_model_to_json(model: CADModel2D) -> Dict[str, Any]:
         })
 
     bbox = model.bbox
+    for circle in model.circles:
+        arcs_data.append({"cx": circle.center.x, "cy": circle.center.y,
+                          "radius": circle.radius, "start_ang": 0,
+                          "end_ang": 6.283185307179586, "is_ccw": True, "layer": circle.layer})
     return {
         "lines": lines_data,
         "arcs": arcs_data,
@@ -135,6 +141,12 @@ def load_sample():
     return process_and_store_model(file_path, original_filename="No2.dxf")
 
 
+@app.route("/api/formats", methods=["GET"])
+def list_formats():
+    return jsonify({"formats": format_capabilities(), "max_file_bytes": 50 * 1024 * 1024,
+                    "scope": "Hình học 2D; xuất kết quả DXF"})
+
+
 @app.route("/api/upload", methods=["POST"])
 def upload_file():
     if "file" not in request.files:
@@ -146,13 +158,16 @@ def upload_file():
 
     session_id = str(uuid.uuid4())[:8]
     ext = os.path.splitext(file.filename)[1].lower()
-    if ext != ".dxf":
-        return jsonify({"error": "Currently only .DXF files are supported directly in web mode"}), 400
+    if ext not in FORMATS:
+        return jsonify({"error": "Định dạng chưa hỗ trợ. Chọn " + ", ".join(FORMATS)}), 400
 
-    saved_path = os.path.join(UPLOAD_DIR, f"{session_id}.dxf")
+    saved_path = os.path.join(UPLOAD_DIR, f"{session_id}{ext}")
     file.save(saved_path)
 
-    return process_and_store_model(saved_path, original_filename=file.filename, session_id=session_id)
+    response = process_and_store_model(saved_path, original_filename=file.filename, session_id=session_id)
+    if session_id not in SESSIONS:
+        os.remove(saved_path)
+    return response
 
 
 def process_and_store_model(file_path: str, original_filename: str, session_id: Optional[str] = None):
@@ -161,7 +176,7 @@ def process_and_store_model(file_path: str, original_filename: str, session_id: 
         session_id = str(uuid.uuid4())[:8]
 
     try:
-        importer = DXFImporter(target_unit="mm")
+        importer = CADImporter(target_unit="mm")
         model = importer.load(file_path)
 
         analyzer = SymmetryAnalyzer(tolerance=0.20, endpoint_tolerance=0.10)
@@ -216,6 +231,7 @@ def process_and_store_model(file_path: str, original_filename: str, session_id: 
             "session_id": session_id,
             "filename": original_filename,
             "geometry": serialize_model_to_json(model),
+            "import_info": model.metadata,
             "analysis": result.to_dict(),
             "heatmap": heatmap_points,
             "visual_quality": vq_json,
@@ -223,6 +239,8 @@ def process_and_store_model(file_path: str, original_filename: str, session_id: 
             "intent": intent_json,
             "elapsed_seconds": round(perf_counter() - started, 3)
         })
+    except CADImportError as e:
+        return jsonify({"error": str(e)}), e.status_code
     except Exception as e:
         import traceback
         traceback.print_exc()

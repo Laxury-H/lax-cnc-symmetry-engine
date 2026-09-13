@@ -1,0 +1,9 @@
+.git
+.venv
+.tools
+scratch
+.pytest_cache
+**/__pycache__
+**/*.pyc
+src/web/uploads/*
+src/web/outputs/*
