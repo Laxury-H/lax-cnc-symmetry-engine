@@ -179,14 +179,22 @@ class DXFImporter:
                 model.arcs.extend(poly_arcs)
 
             elif dxftype == "SPLINE":
-                # Discretize spline as connected line segments
-                spline_lines = self._approximate_spline(entity, scale_factor, layer)
-                model.lines.extend(spline_lines)
+                from src.core.biarc import approximate_spline_entity
+                prims = approximate_spline_entity(entity, scale=scale_factor, tol=0.02, layer=layer)
+                for p in prims:
+                    if isinstance(p, LineSegment2D):
+                        model.lines.append(p)
+                    elif isinstance(p, Arc2D):
+                        model.arcs.append(p)
 
             elif dxftype == "ELLIPSE":
-                pts = [Point2D(p.x * scale_factor, p.y * scale_factor)
-                       for p in entity.flattening(0.02 / scale_factor)]
-                model.lines.extend(LineSegment2D(a, b, layer=layer) for a, b in zip(pts, pts[1:]))
+                from src.core.biarc import approximate_ellipse_entity
+                prims = approximate_ellipse_entity(entity, scale=scale_factor, tol=0.02, layer=layer)
+                for p in prims:
+                    if isinstance(p, LineSegment2D):
+                        model.lines.append(p)
+                    elif isinstance(p, Arc2D):
+                        model.arcs.append(p)
             else:
                 skipped[dxftype] = skipped.get(dxftype, 0) + 1
 
@@ -320,22 +328,32 @@ class DXFExporter:
     }
 
     def __init__(self, dxf_version: str = "R2013"):
-        self.dxf_version = dxf_version
+        self.dxf_version = dxf_version or "R2013"
 
     def export(self, model: CADModel2D, filepath: str):
-        """Write CADModel2D into DXF file."""
+        """Write CADModel2D into DXF file supporting R12, R2000, R2013."""
         os.makedirs(os.path.dirname(os.path.abspath(filepath)), exist_ok=True)
-        doc = ezdxf.new(self.dxf_version, setup=True)
+        version = self.dxf_version.upper()
+        if version not in {"R12", "R2000", "R2004", "R2007", "R2010", "R2013", "R2018"}:
+            version = "R2013"
+        doc = ezdxf.new(version, setup=True)
 
-        # Enforce millimeter units
-        doc.header["$INSUNITS"] = 4
+        # Enforce millimeter units ($INSUNITS not in R12 header)
+        if version != "R12":
+            doc.header["$INSUNITS"] = 4
         doc.header["$MEASUREMENT"] = 1
 
         msp = doc.modelspace()
 
         # Ensure standard layers exist with appropriate colors
         all_layers = set(model.layers)
-        all_layers.update(["OUTER_FRAME", "CNC_CUTOUT", "SYMMETRY_AXIS"])
+        all_layers.update(["OUTER_FRAME", "CNC_CUTOUT", "CNC_POCKET", "SYMMETRY_AXIS"])
+        for seg in model.lines:
+            if seg.layer: all_layers.add(seg.layer)
+        for arc in model.arcs:
+            if arc.layer: all_layers.add(arc.layer)
+        for circ in model.circles:
+            if circ.layer: all_layers.add(circ.layer)
         for layer_name in all_layers:
             if layer_name not in doc.layers:
                 col = self.LAYER_COLORS.get(layer_name, 7)

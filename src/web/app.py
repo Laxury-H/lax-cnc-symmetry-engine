@@ -8,8 +8,8 @@ import os
 import uuid
 import json
 from time import perf_counter
-from typing import Dict, Any, Optional
-from flask import Flask, request, jsonify, send_file, send_from_directory
+from typing import Dict, Any, Optional, List
+from flask import Flask, request, jsonify, send_file, send_from_directory, Response
 from flask_cors import CORS
 from werkzeug.exceptions import HTTPException
 
@@ -18,7 +18,8 @@ from src.io.cad_io import CADImporter, CADImportError, FORMATS, format_capabilit
 from src.symmetry.scorer import SymmetryAnalyzer
 from src.repair.engine import PatternRepairEngine
 from src.core.transform import SymmetryAxis2D
-from src.core.primitives import Point2D, LineSegment2D
+from src.core.primitives import Point2D, LineSegment2D, BoundingBox2D
+from src.web.tasks import TASK_MANAGER
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 STATIC_DIR = os.path.join(BASE_DIR, "static")
@@ -36,15 +37,17 @@ CORS(app)
 SESSIONS: Dict[str, Dict[str, Any]] = {}
 
 
-def session_candidates(session, straighten_boundary=True):
+def session_candidates(session, straighten_boundary=True, exclusion_zones=None):
     """Keep only the latest option set; manual edits invalidate this cache."""
     cached = session.get("candidate_cache")
-    if cached is not None and cached[0] == straighten_boundary:
+    if cached is not None and cached[0] == straighten_boundary and cached[2] == exclusion_zones:
         return cached[1], True
     from src.repair.candidates import CandidateRepairGenerator
     candidates = CandidateRepairGenerator(straighten_boundary=straighten_boundary).generate_all(
-        session["model"], features=session.get("features"), intent=session.get("intent"))
-    session["candidate_cache"] = (straighten_boundary, candidates)
+        session["model"], features=session.get("features"), intent=session.get("intent"),
+        exclusion_zones=exclusion_zones
+    )
+    session["candidate_cache"] = (straighten_boundary, candidates, exclusion_zones)
     return candidates, False
 
 
@@ -147,6 +150,25 @@ def list_formats():
                     "scope": "Hình học 2D; xuất kết quả DXF"})
 
 
+@app.route("/api/tasks/<task_id>/progress", methods=["GET"])
+def task_progress(task_id: str):
+    """Server-Sent Events (SSE) streaming live job progress to client."""
+    return Response(TASK_MANAGER.stream_task_progress(task_id), mimetype="text/event-stream")
+
+
+@app.route("/api/tasks/<task_id>/result", methods=["GET"])
+def task_result(task_id: str):
+    """Fetch completed task result."""
+    task = TASK_MANAGER.get_task(task_id)
+    if not task:
+        return jsonify({"error": "Task not found"}), 404
+    if task.status == "completed":
+        return jsonify({"status": "completed", "result": task.result})
+    if task.status == "failed":
+        return jsonify({"status": "failed", "error": task.error}), 500
+    return jsonify({"status": task.status, "progress": task.progress, "stage": task.stage})
+
+
 @app.route("/api/upload", methods=["POST"])
 def upload_file():
     if "file" not in request.files:
@@ -164,21 +186,43 @@ def upload_file():
     saved_path = os.path.join(UPLOAD_DIR, f"{session_id}{ext}")
     file.save(saved_path)
 
+    is_async = request.args.get("async", "").lower() in ("1", "true", "yes")
+    if is_async:
+        def run_analysis(progress_cb):
+            res = process_and_store_model(
+                saved_path,
+                original_filename=file.filename,
+                session_id=session_id,
+                progress_callback=progress_cb
+            )
+            return res.get_json() if hasattr(res, "get_json") else res
+
+        task_id = TASK_MANAGER.submit_task(run_analysis)
+        return jsonify({
+            "task_id": task_id,
+            "session_id": session_id,
+            "status": "queued",
+            "progress_url": f"/api/tasks/{task_id}/progress",
+            "result_url": f"/api/tasks/{task_id}/result"
+        })
+
     response = process_and_store_model(saved_path, original_filename=file.filename, session_id=session_id)
     if session_id not in SESSIONS:
         os.remove(saved_path)
     return response
 
 
-def process_and_store_model(file_path: str, original_filename: str, session_id: Optional[str] = None):
+def process_and_store_model(file_path: str, original_filename: str, session_id: Optional[str] = None, progress_callback: Optional[Any] = None):
     started = perf_counter()
     if not session_id:
         session_id = str(uuid.uuid4())[:8]
 
     try:
+        if progress_callback: progress_callback(15, "Đang nạp file bản vẽ và chuẩn hóa đơn vị CAD...")
         importer = CADImporter(target_unit="mm")
         model = importer.load(file_path)
 
+        if progress_callback: progress_callback(40, "Đang phân tích trục đối xứng gương RANSAC...")
         analyzer = SymmetryAnalyzer(tolerance=0.20, endpoint_tolerance=0.10)
         result = analyzer.analyze(model)
 
@@ -193,7 +237,20 @@ def process_and_store_model(file_path: str, original_filename: str, session_id: 
             _, dist, _ = spatial.nearest(rp)
             heatmap_points.append({"x": round(p.x, 2), "y": round(p.y, 2), "dev": round(dist, 3)})
 
-        # Design Intent, Feature & Anchor Detection, Visual Quality Scoring
+        if progress_callback: progress_callback(60, "Đang phát hiện đối xứng quay (Cn/Dn) và phân cụm motif...")
+        # Rotational Symmetry Detection (C_n, D_n)
+        from src.symmetry.rotational import RotationalSymmetryDetector
+        rot_detector = RotationalSymmetryDetector(tolerance=0.25)
+        rot_profile = rot_detector.detect(sampled_pts, center=result.primary_axis.origin)
+        rot_json = rot_profile.to_dict()
+
+        # Spatial Clustering (Local vs Global Motifs)
+        from src.symmetry.clustering import SpatialMotifClusterer
+        clusterer = SpatialMotifClusterer()
+        motif_clusters = clusterer.cluster_model(model)
+        clusters_json = [c.to_dict() for c in motif_clusters]
+
+        if progress_callback: progress_callback(80, "Đang phân tích ý đồ thiết kế và chấm điểm chất lượng...")
         from src.features.extractor import FeatureExtractor
         from src.anchors.detector import AnchorDetector
         from src.intent.detector import DesignIntentDetector
@@ -215,11 +272,14 @@ def process_and_store_model(file_path: str, original_filename: str, session_id: 
         intent_json = intent.to_dict()
         vq_json = vq_report.to_dict()
 
+        if progress_callback: progress_callback(95, "Lưu trữ phiên làm việc...")
         SESSIONS[session_id] = {
             "original_path": file_path,
             "filename": original_filename,
             "model": model,
             "analysis": result,
+            "rotational": rot_profile,
+            "clusters": motif_clusters,
             "features": features,
             "anchors": anchors,
             "intent": intent,
@@ -233,6 +293,8 @@ def process_and_store_model(file_path: str, original_filename: str, session_id: 
             "geometry": serialize_model_to_json(model),
             "import_info": model.metadata,
             "analysis": result.to_dict(),
+            "rotational_symmetry": rot_json,
+            "motif_clusters": clusters_json,
             "heatmap": heatmap_points,
             "visual_quality": vq_json,
             "anchors": anchors_json,
@@ -409,6 +471,13 @@ def repair_model():
     strategy = data.get("strategy", "canonical_intent")
     candidate_id = data.get("candidate_id")
     straighten_boundary = data.get("straighten_boundary", True)
+    dxf_version = data.get("dxf_version", "R2013")
+    source_region = data.get("source_region")
+    raw_ez = data.get("exclusion_zones", [])
+    exclusion_zones = [
+        BoundingBox2D(float(z["min_x"]), float(z["min_y"]), float(z["max_x"]), float(z["max_y"]))
+        for z in raw_ez if "min_x" in z and "max_x" in z
+    ] if raw_ez else None
 
     if session_id not in SESSIONS:
         return jsonify({"error": "Session not found"}), 404
@@ -420,10 +489,9 @@ def repair_model():
         engine = PatternRepairEngine()
 
         if candidate_id:
-            # User specifically selected a candidate hypothesis
             from src.repair.candidates import CandidateRepairGenerator
             generator = CandidateRepairGenerator()
-            candidates, _ = session_candidates(session, straighten_boundary)
+            candidates, _ = session_candidates(session, straighten_boundary, exclusion_zones=exclusion_zones)
             matched = next((c for c in candidates if c.candidate_id == candidate_id), None)
             if matched is None:
                 return jsonify({"error": "Không tìm thấy phương án đã chọn."}), 400
@@ -431,7 +499,6 @@ def repair_model():
                 return jsonify({"error": "Phương án không đạt kiểm tra hình học.",
                                 "validation": matched.validation.to_dict()}), 422
 
-            # Use matched candidate
             pre_symm = session["analysis"]
             analyzer = SymmetryAnalyzer(tolerance=0.20, endpoint_tolerance=0.10)
             post_symm = analyzer.analyze(matched.repaired_model)
@@ -473,7 +540,9 @@ def repair_model():
             repair_res = engine.repair(
                 orig_model,
                 strategy=strategy,
-                straighten_boundary=straighten_boundary
+                straighten_boundary=straighten_boundary,
+                exclusion_zones=exclusion_zones,
+                source_region=source_region
             )
 
         session["repaired_result"] = repair_res
@@ -482,11 +551,11 @@ def repair_model():
         base_name = os.path.splitext(session["filename"])[0]
         out_filename = f"{session_id}_repaired.dxf"
         out_filepath = os.path.join(OUTPUT_DIR, out_filename)
-        exporter = DXFExporter(dxf_version="R2013")
+        exporter = DXFExporter(dxf_version=dxf_version)
         exporter.export(repair_res.repaired_model, out_filepath)
         session["repaired_dxf_path"] = out_filepath
 
-        dxf_download_name = f"{base_name}_repaired.dxf"
+        dxf_download_name = f"{base_name}_repaired_{dxf_version.lower()}.dxf"
         report_download_name = f"{base_name}_report.json"
 
         return jsonify({

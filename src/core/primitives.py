@@ -198,6 +198,14 @@ class LineSegment2D:
         return self.vector.angle
 
     @property
+    def is_horizontal(self) -> bool:
+        return abs(self.start.y - self.end.y) < 1e-4
+
+    @property
+    def is_vertical(self) -> bool:
+        return abs(self.start.x - self.end.x) < 1e-4
+
+    @property
     def bbox(self) -> BoundingBox2D:
         return BoundingBox2D(
             min(self.start.x, self.end.x),
@@ -289,6 +297,14 @@ class Arc2D:
     layer: str = "0"
     entity_id: Optional[str] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def cx(self) -> float:
+        return self.center.x
+
+    @property
+    def cy(self) -> float:
+        return self.center.y
 
     @property
     def sweep_angle(self) -> float:

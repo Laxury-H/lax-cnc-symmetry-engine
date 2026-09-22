@@ -72,15 +72,17 @@ class CandidateRepairGenerator:
         self,
         model: CADModel2D,
         features: Optional[Dict[str, Any]] = None,
-        intent: Optional[DesignIntentReport] = None
+        intent: Optional[DesignIntentReport] = None,
+        exclusion_zones: Optional[List[BoundingBox2D]] = None
     ) -> List[RepairCandidate]:
-        return self.generate_all_candidates(model, features=features, intent=intent)
+        return self.generate_all_candidates(model, features=features, intent=intent, exclusion_zones=exclusion_zones)
 
     def generate_all_candidates(
         self,
         model: CADModel2D,
         features: Optional[Dict[str, Any]] = None,
-        intent: Optional[DesignIntentReport] = None
+        intent: Optional[DesignIntentReport] = None,
+        exclusion_zones: Optional[List[BoundingBox2D]] = None
     ) -> List[RepairCandidate]:
         self._quadrant_base = None
         if features is None:
@@ -97,19 +99,19 @@ class CandidateRepairGenerator:
         candidates: List[RepairCandidate] = []
 
         # Candidate A: Canonical Design Intent Reconstruction (Equal corners, regularized kerfs)
-        c_a = self._generate_canonical_intent(model, loops, intent)
+        c_a = self._generate_canonical_intent(model, loops, intent, exclusion_zones=exclusion_zones)
         candidates.append(c_a)
 
         # Candidate B: 4-Quadrant Regularized
-        c_b = self._generate_4_quadrant_regularized(model, loops, intent)
+        c_b = self._generate_4_quadrant_regularized(model, loops, intent, exclusion_zones=exclusion_zones)
         candidates.append(c_b)
 
         # Candidate C: Bilateral L->R Regularized
-        c_c = self._generate_bilateral_regularized(model, loops, intent)
+        c_c = self._generate_bilateral_regularized(model, loops, intent, exclusion_zones=exclusion_zones)
         candidates.append(c_c)
 
         # Candidate D: Minimum Necessary Change
-        c_d = self._generate_minimum_change(model, intent)
+        c_d = self._generate_minimum_change(model, intent, exclusion_zones=exclusion_zones)
         candidates.append(c_d)
 
         # Never recommend invalid geometry just because its quality score is high.
@@ -130,11 +132,44 @@ class CandidateRepairGenerator:
                 model, strategy="4_quadrant", straighten_boundary=self.straighten_boundary)
         return self._quadrant_base
 
+    def _apply_healing_and_exclusions(
+        self,
+        lines: List[LineSegment2D],
+        arcs: List[Arc2D],
+        original_model: CADModel2D,
+        exclusion_zones: Optional[List[BoundingBox2D]] = None
+    ) -> Tuple[List[LineSegment2D], List[Arc2D]]:
+        from src.topology.healing import TopologyHealer
+        if exclusion_zones:
+            kept_lines = []
+            for l in lines:
+                in_ex = any(ez.contains_point(l.start) or ez.contains_point(l.end) for ez in exclusion_zones)
+                if not in_ex:
+                    kept_lines.append(l)
+            kept_arcs = []
+            for a in arcs:
+                in_ex = any(ez.contains_point(a.start_point) or ez.contains_point(a.end_point) for ez in exclusion_zones)
+                if not in_ex:
+                    kept_arcs.append(a)
+            for ol in original_model.lines:
+                if any(ez.contains_point(ol.start) or ez.contains_point(ol.end) for ez in exclusion_zones):
+                    kept_lines.append(ol)
+            for oa in original_model.arcs:
+                if any(ez.contains_point(oa.start_point) or ez.contains_point(oa.end_point) for ez in exclusion_zones):
+                    kept_arcs.append(oa)
+            lines = kept_lines
+            arcs = kept_arcs
+
+        healer = TopologyHealer(snap_radius_mm=0.05, preserve_tabs=True)
+        healed_lines, healed_arcs, _ = healer.heal_and_stitch(lines, arcs)
+        return healed_lines, healed_arcs
+
     def _generate_canonical_intent(
         self,
         model: CADModel2D,
         loops: List[LoopFeature],
-        intent: DesignIntentReport
+        intent: DesignIntentReport,
+        exclusion_zones: Optional[List[BoundingBox2D]] = None
     ) -> RepairCandidate:
         base_res = self._get_quadrant_base(model)
 
@@ -193,11 +228,13 @@ class CandidateRepairGenerator:
 
                         reg_loops[idx] = [Point2D(x1, y1), Point2D(x2, y1), Point2D(x2, y2), Point2D(x1, y2)]
 
-        lines = self._loops_to_lines(reg_loops)
+        lines = self._loops_to_lines(reg_loops, original_model=model)
+        arcs = list(model.arcs)
+        lines, arcs = self._apply_healing_and_exclusions(lines, arcs, model, exclusion_zones)
 
         rep_model = CADModel2D(
             lines=lines,
-            arcs=[],
+            arcs=arcs,
             circles=model.circles,
             layers=model.layers,
             source_file=model.source_file,
@@ -226,7 +263,8 @@ class CandidateRepairGenerator:
         self,
         model: CADModel2D,
         loops: List[LoopFeature],
-        intent: DesignIntentReport
+        intent: DesignIntentReport,
+        exclusion_zones: Optional[List[BoundingBox2D]] = None
     ) -> RepairCandidate:
         res = self._get_quadrant_base(model)
 
@@ -234,11 +272,13 @@ class CandidateRepairGenerator:
         cycle_loops = CycleFinder(graph).extract_loops()
         reg_loops = [self.angle_regularizer.regularize_loop(l.points) for l in cycle_loops]
 
-        lines = self._loops_to_lines(reg_loops)
+        lines = self._loops_to_lines(reg_loops, original_model=model)
+        arcs = list(model.arcs)
+        lines, arcs = self._apply_healing_and_exclusions(lines, arcs, model, exclusion_zones)
 
         rep_model = CADModel2D(
             lines=lines,
-            arcs=[],
+            arcs=arcs,
             circles=model.circles,
             layers=model.layers,
             source_file=model.source_file,
@@ -266,7 +306,8 @@ class CandidateRepairGenerator:
         self,
         model: CADModel2D,
         loops: List[LoopFeature],
-        intent: DesignIntentReport
+        intent: DesignIntentReport,
+        exclusion_zones: Optional[List[BoundingBox2D]] = None
     ) -> RepairCandidate:
         from src.repair.engine import PatternRepairEngine
         engine = PatternRepairEngine()
@@ -276,11 +317,13 @@ class CandidateRepairGenerator:
         cycle_loops = CycleFinder(graph).extract_loops()
         reg_loops = [self.angle_regularizer.regularize_loop(l.points) for l in cycle_loops]
 
-        lines = self._loops_to_lines(reg_loops)
+        lines = self._loops_to_lines(reg_loops, original_model=model)
+        arcs = list(model.arcs)
+        lines, arcs = self._apply_healing_and_exclusions(lines, arcs, model, exclusion_zones)
 
         rep_model = CADModel2D(
             lines=lines,
-            arcs=[],
+            arcs=arcs,
             circles=model.circles,
             layers=model.layers,
             source_file=model.source_file,
@@ -307,20 +350,24 @@ class CandidateRepairGenerator:
     def _generate_minimum_change(
         self,
         model: CADModel2D,
-        intent: DesignIntentReport
+        intent: DesignIntentReport,
+        exclusion_zones: Optional[List[BoundingBox2D]] = None
     ) -> RepairCandidate:
         graph = TopologyGraph.from_cad_model(model)
         cycle_loops = CycleFinder(graph).extract_loops()
         if cycle_loops:
             reg_loops = [self.angle_regularizer.regularize_loop(l.points) for l in cycle_loops]
-            lines = self._loops_to_lines(reg_loops)
+            lines = self._loops_to_lines(reg_loops, original_model=model)
         else:
-            lines, _ = self.angle_regularizer.regularize_lines(model.lines)
-            lines = self._deduplicate_lines(lines)
+            raw_lines, _ = self.angle_regularizer.regularize_lines(model.lines)
+            lines = self._deduplicate_lines(raw_lines)
+
+        arcs = list(model.arcs)
+        lines, arcs = self._apply_healing_and_exclusions(lines, arcs, model, exclusion_zones)
 
         rep_model = CADModel2D(
             lines=lines,
-            arcs=model.arcs,
+            arcs=arcs,
             circles=model.circles,
             layers=model.layers,
             source_file=model.source_file,
@@ -344,7 +391,7 @@ class CandidateRepairGenerator:
             description="Can Thiệp Tối Thiểu (Minimum Change): Chỉ nắn góc các nét bị xiên nhẹ, giữ nguyên 100% bố cục."
         )
 
-    def _loops_to_lines(self, loops: List[List[Point2D]]) -> List[LineSegment2D]:
+    def _loops_to_lines(self, loops: List[List[Point2D]], original_model: Optional[CADModel2D] = None) -> List[LineSegment2D]:
         lines: List[LineSegment2D] = []
         for loop in loops:
             n = len(loop)
@@ -352,7 +399,12 @@ class CandidateRepairGenerator:
                 p1 = loop[i]
                 p2 = loop[(i + 1) % n]
                 if p1.distance_to(p2) > 1e-4:
-                    lines.append(LineSegment2D(p1, p2, layer="0"))
+                    layer = "0"
+                    if original_model and original_model.lines:
+                        mid = Point2D((p1.x + p2.x) * 0.5, (p1.y + p2.y) * 0.5)
+                        closest = min(original_model.lines, key=lambda ol: ol.distance_to_point(mid))
+                        layer = closest.layer
+                    lines.append(LineSegment2D(p1, p2, layer=layer))
         return self._deduplicate_lines(lines)
 
     def _compute_change_ratio(self, original: CADModel2D, repaired: CADModel2D) -> float:

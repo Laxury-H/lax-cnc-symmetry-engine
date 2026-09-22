@@ -97,7 +97,9 @@ class PatternRepairEngine:
         model: CADModel2D,
         strategy: str = "canonical_intent",
         straighten_boundary: bool = True,
-        custom_axis: Optional[SymmetryAxis2D] = None
+        custom_axis: Optional[SymmetryAxis2D] = None,
+        exclusion_zones: Optional[List[BoundingBox2D]] = None,
+        source_region: Optional[str] = None
     ) -> RepairResult:
         """
         Execute repair on CAD model using specified strategy.
@@ -110,6 +112,16 @@ class PatternRepairEngine:
           - 'mirror_top_to_bottom'
           - 'canonical_consensus'
         """
+        if source_region:
+            reg_map = {
+                "left": "mirror_left_to_right",
+                "right": "mirror_right_to_left",
+                "top": "mirror_top_to_bottom",
+                "bottom": "mirror_bottom_to_top"
+            }
+            if source_region in reg_map:
+                strategy = reg_map[source_region]
+
         if strategy in ("canonical_intent", "canonical", "auto", "default"):
             from src.repair.candidates import CandidateRepairGenerator
             from src.features.extractor import FeatureExtractor
@@ -119,7 +131,7 @@ class PatternRepairEngine:
             fe = FeatureExtractor()
             features = fe.extract(model)
             intent = DesignIntentDetector().detect_intent(features["lines"], features["loops"], model.bbox)
-            candidates = generator.generate_all(model, features=features, intent=intent)
+            candidates = generator.generate_all(model, features=features, intent=intent, exclusion_zones=exclusion_zones)
 
             best_cand = candidates[0]  # sorted by objective cost
             pre_vq = generator.quality_scorer.score(model)
@@ -258,14 +270,45 @@ class PatternRepairEngine:
                 p1 = loop_pts[i]
                 p2 = loop_pts[(i + 1) % n]
                 if p1.distance_to(p2) > 1e-4:
-                    repaired_lines.append(LineSegment2D(start=p1, end=p2, layer="0"))
+                    layer = "0"
+                    if model.lines:
+                        mid = Point2D((p1.x + p2.x) * 0.5, (p1.y + p2.y) * 0.5)
+                        closest = min(model.lines, key=lambda ol: ol.distance_to_point(mid))
+                        layer = closest.layer
+                    repaired_lines.append(LineSegment2D(start=p1, end=p2, layer=layer))
 
         repaired_lines = self._deduplicate_lines(repaired_lines)
-        ops.append(f"Topology cleanup: generated {len(repaired_lines)} watertight lines across {len(repaired_loops_points)} closed loops.")
+        repaired_arcs: List[Arc2D] = list(model.arcs)
+
+        # Apply exclusion zones if specified
+        if exclusion_zones:
+            kept_lines = []
+            for l in repaired_lines:
+                if not any(ez.contains_point(l.start) or ez.contains_point(l.end) for ez in exclusion_zones):
+                    kept_lines.append(l)
+            kept_arcs = []
+            for a in repaired_arcs:
+                if not any(ez.contains_point(a.start_point) or ez.contains_point(a.end_point) for ez in exclusion_zones):
+                    kept_arcs.append(a)
+            for ol in model.lines:
+                if any(ez.contains_point(ol.start) or ez.contains_point(ol.end) for ez in exclusion_zones):
+                    kept_lines.append(ol)
+            for oa in model.arcs:
+                if any(ez.contains_point(oa.start_point) or ez.contains_point(oa.end_point) for ez in exclusion_zones):
+                    kept_arcs.append(oa)
+            repaired_lines = kept_lines
+            repaired_arcs = kept_arcs
+
+        # Apply TopologyHealer (heal_and_stitch)
+        from src.topology.healing import TopologyHealer
+        healer = TopologyHealer(snap_radius_mm=0.05, preserve_tabs=True)
+        repaired_lines, repaired_arcs, heal_report = healer.heal_and_stitch(repaired_lines, repaired_arcs)
+
+        ops.append(f"Topology cleanup & healing: generated {len(repaired_lines)} lines, {len(repaired_arcs)} arcs across {len(repaired_loops_points)} closed loops. Welded {heal_report.welded_vertices_count} vertices, preserved {heal_report.tabs_preserved_count} tabs.")
 
         repaired_model = CADModel2D(
             lines=repaired_lines,
-            arcs=[],
+            arcs=repaired_arcs,
             circles=model.circles,
             layers=model.layers,
             source_file=model.source_file,

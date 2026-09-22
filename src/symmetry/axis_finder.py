@@ -9,6 +9,7 @@ import math
 from typing import List, Tuple, Optional, Dict
 import numpy as np
 from scipy.optimize import minimize
+from scipy.spatial import cKDTree
 
 from src.core.primitives import Point2D, Vector2D, BoundingBox2D
 from src.core.transform import SymmetryAxis2D
@@ -186,7 +187,62 @@ class SymmetryAxisFinder:
             hypotheses.append(SymmetryAxis2D.from_angle_and_point(center_pt, math.pi * 0.25))
             hypotheses.append(SymmetryAxis2D.from_angle_and_point(center_pt, math.pi * 0.75))
 
+        # 6. RANSAC Bisector Hypotheses (Outlier Rejection for noisy scan/vector text)
+        ransac_axes = self._ransac_hypotheses(points, center_pt, max_trials=35)
+        hypotheses.extend(ransac_axes)
+
         return hypotheses
+
+    def _ransac_hypotheses(
+        self,
+        points: List[Point2D],
+        center: Point2D,
+        max_trials: int = 35
+    ) -> List[SymmetryAxis2D]:
+        """Generate robust candidate axes via RANSAC sampling to reject outliers."""
+        n = len(points)
+        if n < 12:
+            return []
+
+        rng = np.random.default_rng(42)
+        step = max(1, n // 150)
+        sub_pts = points[::step]
+        coords = np.array([[p.x, p.y] for p in sub_pts], dtype=np.float64)
+        tree = cKDTree(coords)
+
+        candidates: List[Tuple[int, float, SymmetryAxis2D]] = []
+
+        for _ in range(max_trials):
+            i, j = rng.choice(len(sub_pts), size=2, replace=False)
+            p1 = sub_pts[i]
+            p2 = sub_pts[j]
+            d = p1.distance_to(p2)
+            if d < 15.0:
+                continue
+
+            mid = Point2D((p1.x + p2.x) * 0.5, (p1.y + p2.y) * 0.5)
+            # Bisector direction perpendicular to chord
+            v = (p2 - p1).normalized()
+            bisector_dir = Vector2D(-v.dy, v.dx)
+            axis = SymmetryAxis2D(origin=mid, direction=bisector_dir)
+
+            # Test reflection of sub_pts across candidate axis
+            dx = coords[:, 0] - axis.origin.x
+            dy = coords[:, 1] - axis.origin.y
+            proj = dx * axis.direction.dx + dy * axis.direction.dy
+            refl_x = 2 * (axis.origin.x + proj * axis.direction.dx) - coords[:, 0]
+            refl_y = 2 * (axis.origin.y + proj * axis.direction.dy) - coords[:, 1]
+            refl_coords = np.column_stack((refl_x, refl_y))
+
+            dists, _ = tree.query(refl_coords, k=1)
+            inliers = int(np.count_nonzero(dists <= self.tolerance * 1.5))
+            if inliers > len(sub_pts) * 0.40:
+                mean_inlier_err = float(np.mean(dists[dists <= self.tolerance * 1.5]))
+                candidates.append((inliers, mean_inlier_err, axis))
+
+        # Sort by inlier count descending, then error ascending
+        candidates.sort(key=lambda c: (-c[0], c[1]))
+        return [c[2] for c in candidates[:3]]
 
     def _refine_axis(
         self,

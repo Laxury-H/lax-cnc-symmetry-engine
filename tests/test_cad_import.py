@@ -96,7 +96,7 @@ def test_dxf_nested_blocks_ellipse_circle(tmp_path):
     assert model.lines[0].start.x == pytest.approx(10)
     assert model.lines[0].start.y == pytest.approx(25)
     assert model.lines[0].end.y == pytest.approx(35)
-    assert len(model.lines) > 10
+    assert (len(model.lines) + len(model.arcs)) > 10
     assert model.metadata["skipped_entities"] == {"TEXT": 1}
     assert serialize_model_to_json(model)["arcs"][-1]["end_ang"] == pytest.approx(math.tau)
 

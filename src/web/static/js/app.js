@@ -69,12 +69,31 @@ document.addEventListener('DOMContentLoaded', () => {
   const btnToolDraw = document.getElementById('btn-tool-draw');
   const btnToolAngle = document.getElementById('btn-tool-angle');
   const btnToolDistance = document.getElementById('btn-tool-distance');
+  const btnToolZone = document.getElementById('btn-tool-zone');
   const btnToolDelete = document.getElementById('btn-tool-delete');
   const btnToolUndo = document.getElementById('btn-tool-undo');
   const btnToolRedo = document.getElementById('btn-tool-redo');
   const btnToolClearMeas = document.getElementById('btn-tool-clear-meas');
   const btnSyncReanalyze = document.getElementById('btn-sync-reanalyze');
   const btnDownloadManualDxf = document.getElementById('btn-download-manual-dxf');
+
+  // Diff & Inspection HUD DOM
+  const diffSliderContainer = document.getElementById('diff-slider-container');
+  const diffSlider = document.getElementById('diff-slider');
+  const diffPct = document.getElementById('diff-pct');
+
+  // Keep Source Region & Exclusion Zones DOM
+  const groupSourceRegion = document.getElementById('group-source-region');
+  const exclusionZoneHud = document.getElementById('exclusion-zone-hud');
+  const zoneCountBadge = document.getElementById('zone-count-badge');
+  const btnClearZones = document.getElementById('btn-clear-zones');
+  const selectDxfVersion = document.getElementById('select-dxf-version');
+
+  // Async Task Progress DOM
+  const taskProgressContainer = document.getElementById('task-progress-container');
+  const taskProgressBar = document.getElementById('task-progress-bar');
+  const taskProgressLabel = document.getElementById('task-progress-label');
+  const taskProgressPct = document.getElementById('task-progress-pct');
 
   const promptText = document.getElementById('prompt-text');
   const selectedInspector = document.getElementById('selected-inspector');
@@ -87,6 +106,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // State
   let currentSessionId = null;
   let currentCandidateId = null;
+  let currentSourceRegion = 'auto';
   let candidateMap = new Map();
   let candidateVersion = 0;
   let operationStarted = 0;
@@ -117,6 +137,7 @@ document.addEventListener('DOMContentLoaded', () => {
     viewer.layers.repaired = false;
     exportCard.classList.add('hidden');
     document.getElementById('toggle-repaired').classList.add('hidden');
+    if (diffSliderContainer) diffSliderContainer.classList.add('hidden');
     viewer.render();
   }
 
@@ -129,7 +150,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // CAD Tool Mode Switching
   function setCadTool(toolMode, activeBtn) {
     viewer.setToolMode(toolMode);
-    [btnToolSelect, btnToolDraw, btnToolAngle, btnToolDistance].forEach(b => {
+    [btnToolSelect, btnToolDraw, btnToolAngle, btnToolDistance, btnToolZone].forEach(b => {
       if (b) b.classList.remove('active');
     });
     if (activeBtn) activeBtn.classList.add('active');
@@ -139,6 +160,7 @@ document.addEventListener('DOMContentLoaded', () => {
   if (btnToolDraw) btnToolDraw.addEventListener('click', () => setCadTool('draw_line', btnToolDraw));
   if (btnToolAngle) btnToolAngle.addEventListener('click', () => setCadTool('measure_angle', btnToolAngle));
   if (btnToolDistance) btnToolDistance.addEventListener('click', () => setCadTool('measure_distance', btnToolDistance));
+  if (btnToolZone) btnToolZone.addEventListener('click', () => setCadTool('exclusion_zone', btnToolZone));
 
   if (btnToolDelete) btnToolDelete.addEventListener('click', () => viewer.deleteSelected());
   if (btnToolUndo) btnToolUndo.addEventListener('click', () => viewer.undo());
@@ -211,6 +233,55 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     }
   };
+
+  viewer.onAxisChange = (axis) => {
+    if (metricAxis) {
+      metricAxis.textContent = `${axis.angle_deg.toFixed(1)}° (X=${axis.origin.x.toFixed(1)})`;
+    }
+    invalidateCandidates('Đã chỉnh trục đối xứng thủ công. Bấm Đồng bộ để tính lại phương án.');
+    if (btnSyncReanalyze) {
+      btnSyncReanalyze.classList.remove('hidden');
+    }
+  };
+
+  viewer.onExclusionZonesChange = (zones) => {
+    if (zoneCountBadge && exclusionZoneHud) {
+      zoneCountBadge.textContent = zones.length;
+      exclusionZoneHud.classList.toggle('hidden', zones.length === 0);
+    }
+    invalidateCandidates(`Đã cập nhật ${zones.length} vùng cấm đối xứng. Đang tính lại phương án...`);
+    if (currentSessionId) {
+      loadCandidates(currentSessionId);
+    }
+  };
+
+  if (btnClearZones) {
+    btnClearZones.addEventListener('click', () => {
+      viewer.clearExclusionZones();
+    });
+  }
+
+  // Diff Slider Event Listener
+  if (diffSlider) {
+    diffSlider.addEventListener('input', () => {
+      viewer.setDiffSlider(diffSlider.value);
+      if (diffPct) diffPct.textContent = `${diffSlider.value}%`;
+    });
+  }
+
+  // Keep Source Region Segmented Control Listener
+  if (groupSourceRegion) {
+    groupSourceRegion.querySelectorAll('.segment-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        groupSourceRegion.querySelectorAll('.segment-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        currentSourceRegion = btn.dataset.region || 'auto';
+        if (currentSessionId) {
+          loadCandidates(currentSessionId);
+        }
+      });
+    });
+  }
 
   // Sync & Re-Analyze Modified Model
   if (btnSyncReanalyze) {
@@ -456,7 +527,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const version = candidateVersion;
     setStatus('Đang so sánh các phương án…', true);
     try {
-      const resp = await fetch(`/api/candidates/${sessionId}?straighten_boundary=${straightenCheckbox.checked}`);
+      const regionParam = currentSourceRegion !== 'auto' ? `&source_region=${encodeURIComponent(currentSourceRegion)}` : '';
+      const resp = await fetch(`/api/candidates/${sessionId}?straighten_boundary=${straightenCheckbox.checked}${regionParam}`);
       const data = await readApiResponse(resp);
       if (version !== candidateVersion || sessionId !== currentSessionId) return;
       candidateMap = new Map(data.candidates.map(c => [c.candidate_id, c]));
@@ -530,6 +602,14 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('toggle-heatmap').classList.remove('active');
     heatmapLegend.classList.add('hidden');
     exportCard.classList.add('hidden');
+
+    // Show Diff / Inspection Mode Slider
+    if (diffSliderContainer) {
+      diffSliderContainer.classList.remove('hidden');
+      if (diffSlider) diffSlider.value = 50;
+      if (diffPct) diffPct.textContent = '50%';
+      viewer.setDiffSlider(50);
+    }
   }
 
   previewOriginal.addEventListener('click', () => {
@@ -537,6 +617,7 @@ document.addEventListener('DOMContentLoaded', () => {
     viewer.render();
     previewLabel.textContent = 'Đang xem bản gốc · chọn phương án để so sánh';
     document.getElementById('toggle-repaired').classList.remove('active');
+    if (diffSliderContainer) diffSliderContainer.classList.add('hidden');
   });
 
   straightenCheckbox.addEventListener('change', async () => {
@@ -552,6 +633,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const selectedStrategy = candidateMap.get(currentCandidateId).strategy.toLowerCase();
     const straightenBoundary = document.getElementById('chk-straighten').checked;
     const appliedVersion = candidateVersion;
+    const dxfVersion = selectDxfVersion ? selectDxfVersion.value : 'R2013';
+    const sourceRegion = currentSourceRegion !== 'auto' ? currentSourceRegion : null;
+    const exclusionZones = viewer.exclusionZones && viewer.exclusionZones.length > 0 ? viewer.exclusionZones : null;
 
     setStatus('Đang thực thi sửa đối xứng & tái tạo topology...', true);
     btnApplyRepair.disabled = true;
@@ -564,7 +648,10 @@ document.addEventListener('DOMContentLoaded', () => {
           session_id: currentSessionId,
           strategy: selectedStrategy,
           candidate_id: currentCandidateId,
-          straighten_boundary: straightenBoundary
+          straighten_boundary: straightenBoundary,
+          dxf_version: dxfVersion,
+          source_region: sourceRegion,
+          exclusion_zones: exclusionZones
         })
       });
 

@@ -130,6 +130,22 @@ class SymmetryAxis2D:
             2 * (self.origin.y + projection * self.direction.dy) - coords[:, 1],
         ))
 
+    def reflect_polyline(self, vertices: List[Tuple[float, float, float]], reverse_order: bool = False) -> List[Tuple[float, float, float]]:
+        """Reflect a list of (x, y, bulge) vertices with exact chirality preservation."""
+        from src.core.polyline_utils import reflect_polyline_vertices
+        return reflect_polyline_vertices(vertices, self, reverse_order=reverse_order)
+
+    def enforce_continuity(
+        self,
+        lines: List[LineSegment2D],
+        arcs: List[Arc2D],
+        angle_threshold_deg: float = 5.0
+    ) -> Tuple[List[LineSegment2D], List[Arc2D]]:
+        """Enforces C1/G1 continuity at the symmetry axis boundary."""
+        from src.core.continuity import AxisContinuityEnforcer
+        enforcer = AxisContinuityEnforcer(angle_threshold_deg=angle_threshold_deg)
+        return enforcer.enforce_model_continuity(lines, arcs, self)
+
     @classmethod
     def vertical(cls, x_offset: float) -> SymmetryAxis2D:
         """Create a vertical symmetry axis x = x_offset."""

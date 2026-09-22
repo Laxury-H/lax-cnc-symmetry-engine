@@ -29,6 +29,19 @@ class CADViewer {
     this.heatmapPoints = [];
     this.anchors = [];
 
+    // Diff / Inspection Mode State
+    this.diffSliderValue = 50; // 0 = 100% original, 100 = 100% repaired
+    this.isDiffMode = false;
+
+    // Exclusion Zones State
+    this.exclusionZones = [];  // Array of { min_x, min_y, max_x, max_y, id }
+    this.zoneStart = null;
+
+    // Interactive Axis Dragging State
+    this.hoveredAxisPart = null; // 'origin' | 'tip' | null
+    this.isDraggingAxis = false;
+    this.axisDragPart = null;
+
     // Layer visibility
     this.layers = {
       original: true,
@@ -40,7 +53,7 @@ class CADViewer {
       measurements: true
     };
 
-    // Tool Modes: 'select' | 'pan' | 'draw_line' | 'measure_angle' | 'measure_distance'
+    // Tool Modes: 'select' | 'pan' | 'draw_line' | 'measure_angle' | 'measure_distance' | 'exclusion_zone'
     this.toolMode = 'select';
 
     // Selection & Editing State
@@ -74,6 +87,8 @@ class CADViewer {
     this.onGeometryChange = null;
     this.onMeasurementsChange = null;
     this.onPromptUpdate = null;
+    this.onAxisChange = null;
+    this.onExclusionZonesChange = null;
 
     this.initEvents();
     this.resize();
@@ -158,6 +173,7 @@ class CADViewer {
   setToolMode(mode) {
     this.toolMode = mode;
     this.drawStartPoint = null;
+    this.zoneStart = null;
     this.measurePoints = [];
     this.measureLines = [];
     this.snappedPoint = null;
@@ -166,13 +182,28 @@ class CADViewer {
     this.render();
   }
 
+  setDiffSlider(val) {
+    this.diffSliderValue = Math.max(0, Math.min(100, Number(val)));
+    this.render();
+  }
+
+  clearExclusionZones() {
+    this.exclusionZones = [];
+    this.render();
+    if (this.onExclusionZonesChange) this.onExclusionZonesChange(this.exclusionZones);
+  }
+
   updateCursor() {
     if (this.toolMode === 'pan') {
       this.canvas.style.cursor = 'grab';
-    } else if (this.toolMode === 'draw_line') {
+    } else if (this.toolMode === 'draw_line' || this.toolMode === 'exclusion_zone') {
       this.canvas.style.cursor = 'crosshair';
     } else if (this.toolMode === 'measure_angle' || this.toolMode === 'measure_distance') {
       this.canvas.style.cursor = 'crosshair';
+    } else if (this.hoveredAxisPart === 'origin') {
+      this.canvas.style.cursor = 'move';
+    } else if (this.hoveredAxisPart === 'tip') {
+      this.canvas.style.cursor = 'grab';
     } else {
       this.canvas.style.cursor = 'default';
     }
@@ -182,7 +213,9 @@ class CADViewer {
     if (!this.onPromptUpdate) return;
     let msg = '';
     if (this.toolMode === 'select') {
-      msg = 'Nhấp chuột vào nét để chọn. Bấm Delete để xóa. Giữ Shift để chọn nhiều nét.';
+      msg = 'Nhấp chuột vào nét để chọn. Kéo ⠿ trên trục để dời, ⟳ để xoay trục đối xứng.';
+    } else if (this.toolMode === 'exclusion_zone') {
+      msg = 'Kéo thả chuột trên bản vẽ để tạo Vùng cấm đối xứng (bảo vệ chi tiết như lỗ khóa, chốt định vị).';
     } else if (this.toolMode === 'draw_line') {
       msg = this.drawStartPoint 
         ? 'Nhấp điểm thứ hai để kết thúc nét. Giữ Shift để khóa góc 0°/45°/90°/135°. Esc để hủy.'
@@ -477,6 +510,19 @@ class CADViewer {
         return;
       }
 
+      // Check if user is clicking on symmetry axis handles
+      if (this.layers.axis && this.axis && this.hoveredAxisPart && e.button === 0) {
+        this.isDraggingAxis = true;
+        this.axisDragPart = this.hoveredAxisPart;
+        return;
+      }
+
+      // Exclusion Zone drawing start
+      if (e.button === 0 && this.toolMode === 'exclusion_zone') {
+        this.zoneStart = { x: world.x, y: world.y };
+        return;
+      }
+
       if (e.button === 0) { // Left Click
         this.handleLeftClick(pos, world, e.shiftKey);
       }
@@ -499,6 +545,49 @@ class CADViewer {
         this.viewCenterY = this.dragStartCenterY + dy;
         this.render();
         return;
+      }
+
+      // Axis dragging
+      if (this.isDraggingAxis && this.axis) {
+        if (this.axisDragPart === 'origin') {
+          this.axis.origin.x = Math.round(world.x * 100) / 100;
+          this.axis.origin.y = Math.round(world.y * 100) / 100;
+        } else if (this.axisDragPart === 'tip') {
+          const dx = world.x - this.axis.origin.x;
+          const dy = world.y - this.axis.origin.y;
+          let deg = Math.atan2(dy, dx) * 180 / Math.PI;
+          if (deg < 0) deg += 360;
+          this.axis.angle_deg = Math.round(deg * 10) / 10;
+        }
+        this.render();
+        if (this.onAxisChange) this.onAxisChange(this.axis);
+        return;
+      }
+
+      // Exclusion zone dragging preview
+      if (this.toolMode === 'exclusion_zone' && this.zoneStart) {
+        this.render();
+        return;
+      }
+
+      // Check axis handle hover when in select mode
+      if (this.layers.axis && this.axis && this.toolMode === 'select') {
+        const originScr = this.worldToScreen(this.axis.origin.x, this.axis.origin.y);
+        const rad = (this.axis.angle_deg * Math.PI) / 180;
+        const tipScr = {
+          x: originScr.x + Math.cos(rad) * 90,
+          y: originScr.y - Math.sin(rad) * 90
+        };
+        const dOrigin = Math.hypot(pos.x - originScr.x, pos.y - originScr.y);
+        const dTip = Math.hypot(pos.x - tipScr.x, pos.y - tipScr.y);
+        if (dOrigin < 12) {
+          this.hoveredAxisPart = 'origin';
+        } else if (dTip < 12) {
+          this.hoveredAxisPart = 'tip';
+        } else {
+          this.hoveredAxisPart = null;
+        }
+        this.updateCursor();
       }
 
       // Check Snapping when drawing or measuring distance
@@ -524,6 +613,33 @@ class CADViewer {
       if (this.isDragging) {
         this.isDragging = false;
         this.updateCursor();
+      }
+
+      if (this.isDraggingAxis) {
+        this.isDraggingAxis = false;
+        this.axisDragPart = null;
+        this.updateCursor();
+      }
+
+      if (this.toolMode === 'exclusion_zone' && this.zoneStart) {
+        const min_x = Math.min(this.zoneStart.x, this.mouseWorld.x);
+        const max_x = Math.max(this.zoneStart.x, this.mouseWorld.x);
+        const min_y = Math.min(this.zoneStart.y, this.mouseWorld.y);
+        const max_y = Math.max(this.zoneStart.y, this.mouseWorld.y);
+        const w = max_x - min_x;
+        const h = max_y - min_y;
+        if (w > 0.5 && h > 0.5) {
+          this.exclusionZones.push({
+            min_x: Math.round(min_x * 100) / 100,
+            min_y: Math.round(min_y * 100) / 100,
+            max_x: Math.round(max_x * 100) / 100,
+            max_y: Math.round(max_y * 100) / 100,
+            id: Date.now()
+          });
+          if (this.onExclusionZonesChange) this.onExclusionZonesChange(this.exclusionZones);
+        }
+        this.zoneStart = null;
+        this.render();
       }
     });
   }
@@ -656,18 +772,73 @@ class CADViewer {
 
     // 1. Draw Repaired Geometry if active
     if (this.layers.repaired && this.repairedModel) {
-      ctx.strokeStyle = '#10b981'; // Emerald Green
-      ctx.lineWidth = 1.8;
+      if (this.isDiffMode || (this.layers.original && this.originalModel)) {
+        const alphaRep = Math.max(0.15, this.diffSliderValue / 100);
+        ctx.strokeStyle = `rgba(16, 185, 129, ${alphaRep})`; // Emerald Green for repaired
+        ctx.lineWidth = 2.0;
+      } else {
+        ctx.strokeStyle = '#10b981'; // Emerald Green
+        ctx.lineWidth = 1.8;
+      }
       ctx.setLineDash([]);
       this.drawModelEntities(this.repairedModel, ctx);
     }
 
     // 2. Draw Original Geometry
     if (this.layers.original && this.originalModel) {
-      ctx.strokeStyle = this.layers.repaired ? 'rgba(255, 255, 255, 0.25)' : '#e5e7eb';
-      ctx.lineWidth = this.layers.repaired ? 1.0 : 1.4;
+      if (this.layers.repaired && this.repairedModel) {
+        const alphaOrig = Math.max(0.15, (100 - this.diffSliderValue) / 100);
+        ctx.strokeStyle = `rgba(239, 68, 68, ${alphaOrig})`; // Crimson Red for original in Diff mode
+        ctx.lineWidth = 1.8;
+      } else {
+        ctx.strokeStyle = '#e5e7eb';
+        ctx.lineWidth = 1.4;
+      }
       ctx.setLineDash([]);
       this.drawModelEntities(this.originalModel, ctx);
+    }
+
+    // Draw Exclusion Zones
+    if (this.exclusionZones && this.exclusionZones.length > 0) {
+      for (let i = 0; i < this.exclusionZones.length; i++) {
+        const z = this.exclusionZones[i];
+        const p1 = this.worldToScreen(z.min_x, z.max_y);
+        const p2 = this.worldToScreen(z.max_x, z.min_y);
+        const w = p2.x - p1.x;
+        const h = p2.y - p1.y;
+
+        ctx.fillStyle = 'rgba(245, 158, 11, 0.15)';
+        ctx.fillRect(p1.x, p1.y, w, h);
+
+        ctx.strokeStyle = '#f59e0b';
+        ctx.lineWidth = 1.8;
+        ctx.setLineDash([5, 4]);
+        ctx.strokeRect(p1.x, p1.y, w, h);
+        ctx.setLineDash([]);
+
+        this.drawBadge(ctx, (p1.x + p2.x) * 0.5, p1.y + 10, `🛡️ VÙNG CẤM #${i + 1}`, 'rgba(15, 23, 42, 0.9)', '#f59e0b', '#f59e0b');
+      }
+    }
+
+    // Draw active exclusion zone drawing preview
+    if (this.toolMode === 'exclusion_zone' && this.zoneStart) {
+      const minX = Math.min(this.zoneStart.x, this.mouseWorld.x);
+      const maxX = Math.max(this.zoneStart.x, this.mouseWorld.x);
+      const minY = Math.min(this.zoneStart.y, this.mouseWorld.y);
+      const maxY = Math.max(this.zoneStart.y, this.mouseWorld.y);
+      const p1 = this.worldToScreen(minX, maxY);
+      const p2 = this.worldToScreen(maxX, minY);
+      const w = p2.x - p1.x;
+      const h = p2.y - p1.y;
+
+      ctx.fillStyle = 'rgba(245, 158, 11, 0.25)';
+      ctx.fillRect(p1.x, p1.y, w, h);
+      ctx.strokeStyle = '#fbbf24';
+      ctx.lineWidth = 2.0;
+      ctx.setLineDash([4, 3]);
+      ctx.strokeRect(p1.x, p1.y, w, h);
+      ctx.setLineDash([]);
+      this.drawBadge(ctx, (p1.x + p2.x) * 0.5, p1.y - 12, 'Vùng cấm (Nhả chuột để đặt)', 'rgba(15, 23, 42, 0.9)', '#f59e0b', '#fbbf24');
     }
 
     // 3. Draw Hovered & Selected Lines
@@ -979,11 +1150,41 @@ class CADViewer {
     ctx.setLineDash([]);
 
     const centerScreen = this.worldToScreen(ox, oy);
+
+    // Interactive Origin Handle (center translation)
+    ctx.beginPath();
+    ctx.arc(centerScreen.x, centerScreen.y, 8, 0, Math.PI * 2);
+    ctx.fillStyle = this.hoveredAxisPart === 'origin' ? '#ff784e' : '#ff5722';
+    ctx.fill();
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    // Interactive Rotation Handle (tip)
+    const tipScreen = {
+      x: centerScreen.x + dirX * 90,
+      y: centerScreen.y - dirY * 90
+    };
+    ctx.beginPath();
+    ctx.moveTo(centerScreen.x, centerScreen.y);
+    ctx.lineTo(tipScreen.x, tipScreen.y);
+    ctx.strokeStyle = '#38bdf8';
+    ctx.lineWidth = 1.6;
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.arc(tipScreen.x, tipScreen.y, 7, 0, Math.PI * 2);
+    ctx.fillStyle = this.hoveredAxisPart === 'tip' ? '#00f2fe' : '#38bdf8';
+    ctx.fill();
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
     ctx.fillStyle = '#ff5722';
     ctx.font = '11px JetBrains Mono, monospace';
     ctx.textAlign = 'left';
     ctx.textBaseline = 'bottom';
-    ctx.fillText(`TRỤC ${axis.angle_deg.toFixed(1)}° (X=${ox.toFixed(2)})`, centerScreen.x + 8, centerScreen.y - 8);
+    ctx.fillText(`TRỤC ${axis.angle_deg.toFixed(1)}° (Kéo ⠿ dời, ⟳ xoay)`, centerScreen.x + 12, centerScreen.y - 10);
   }
 
   drawAnchors(ctx) {

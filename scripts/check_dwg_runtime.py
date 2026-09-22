@@ -12,9 +12,14 @@ from src.io.cad_io import CADImporter, find_oda_converter
 
 
 def main():
+    optional = "--optional" in sys.argv or os.environ.get("DWG_RUNTIME_OPTIONAL") == "1"
     executable = find_oda_converter()
     if not executable:
-        raise RuntimeError("ODA File Converter is missing")
+        msg = "ODA File Converter is missing (operating in DXF-native mode)."
+        if optional:
+            print(f"Warning: {msg}")
+            return
+        raise RuntimeError(msg)
     with tempfile.TemporaryDirectory(prefix="oda_check_") as temporary:
         root = Path(temporary)
         source, output = root / "input", root / "output"
